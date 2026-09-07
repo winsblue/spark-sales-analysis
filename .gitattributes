@@ -1,0 +1,29 @@
+# 统一换行符，避免 Windows 检出后 shell 脚本无法在 Linux 执行
+* text=auto
+
+*.sh      text eol=lf
+*.cmd     text eol=crlf
+*.bat     text eol=crlf
+*.java    text eol=lf
+*.xml     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.properties text eol=lf
+*.md      text eol=lf
+*.sql     text eol=lf
+*.js      text eol=lf
+*.vue     text eol=lf
+*.css     text eol=lf
+*.json    text eol=lf
+
+# 二进制文件不做换行符转换
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.ico     binary
+*.jar     binary
+*.gz      binary
+*.tgz     binary
+*.zip     binary
+*.exe     binary
+*.dll     binary
