@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.sales</groupId>
+    <artifactId>spark-sales-analysis</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>spark-job</artifactId>
+  <packaging>jar</packaging>
+  <name>spark-job</name>
+  <description>Spark 离线计算模块：模拟数据生成、数据清洗、多维指标统计（RDD / DataFrame 双实现）</description>
+
+  <dependencies>
+    <!-- Spark SQL：提供 SparkSession / DataFrame / SparkSQL 能力 -->
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-sql_${scala.binary.version}</artifactId>
+      <version>${spark.version}</version>
+      <exclusions>
+        <!-- 单机运行不需要集群资源调度相关组件，排除以减小依赖体积 -->
+        <exclusion>
+          <groupId>org.apache.spark</groupId>
+          <artifactId>spark-yarn_${scala.binary.version}</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
+    <!-- 结果落库：写入 MySQL 结果层 -->
+    <dependency>
+      <groupId>mysql</groupId>
+      <artifactId>mysql-connector-java</artifactId>
+    </dependency>
+
+    <!--
+      日志：Spark 3.5 自带 log4j2 + log4j-slf4j2-impl（SLF4J 2.x），
+      此处不再单独引入 slf4j-api，避免 1.7.x 与 2.x 冲突导致绑定失败告警。
+      日志级别通过 src/main/resources/log4j2.properties 控制。
+    -->
+  </dependencies>
+
+  <build>
+    <finalName>spark-job</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>com.sales.SalesAnalysisApplication</mainClass>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>build-classpath</id>
+            <phase>package</phase>
+            <goals>
+              <goal>build-classpath</goal>
+            </goals>
+            <configuration>
+              <outputFile>${project.build.directory}/classpath.txt</outputFile>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!--
+      ============================================================
+      集群提交包（推荐用于 Linux 大数据环境）
+      只打包"本项目代码 + MySQL 驱动"，Spark / Scala / Hadoop 由集群提供。
+      产出：spark-job/target/spark-job-1.0.0-cluster.jar
+      构建：mvn -pl spark-job -am -Pcluster-package clean package
+      提交：见 scripts/linux/run-etl-cluster.sh 或 docs/09-Linux集群部署指南.md
+      ============================================================
+    -->
+    <profile>
+      <id>cluster-package</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-shade-plugin</artifactId>
+            <version>3.4.1</version>
+            <executions>
+              <execution>
+                <phase>package</phase>
+                <goals>
+                  <goal>shade</goal>
+                </goals>
+                <configuration>
+                  <shadedArtifactAttached>true</shadedArtifactAttached>
+                  <shadedClassifierName>cluster</shadedClassifierName>
+                  <createDependencyReducedPom>false</createDependencyReducedPom>
+                  <artifactSet>
+                    <excludes>
+                      <exclude>org.apache.spark:*</exclude>
+                      <exclude>org.scala-lang:*</exclude>
+                      <exclude>org.apache.hadoop:*</exclude>
+                      <exclude>org.apache.logging.log4j:*</exclude>
+                      <exclude>org.slf4j:*</exclude>
+                      <exclude>com.fasterxml.jackson.*:*</exclude>
+                    </excludes>
+                  </artifactSet>
+                  <filters>
+                    <filter>
+                      <artifact>*:*</artifact>
+                      <excludes>
+                        <exclude>META-INF/*.SF</exclude>
+                        <exclude>META-INF/*.DSA</exclude>
+                        <exclude>META-INF/*.RSA</exclude>
+                      </excludes>
+                    </filter>
+                  </filters>
+                  <transformers>
+                    <transformer
+                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                      <mainClass>com.sales.SalesAnalysisApplication</mainClass>
+                    </transformer>
+                  </transformers>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!--
+      ============================================================
+      独立可执行包（用于完全没有安装 Spark 的机器上直接 java -jar 运行）
+      产出：spark-job/target/spark-job-1.0.0-all.jar（约 200 MB+）
+      构建：mvn -pl spark-job -am -Pstandalone-package clean package
+      ============================================================
+    -->
+    <profile>
+      <id>standalone-package</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-shade-plugin</artifactId>
+            <version>3.4.1</version>
+            <executions>
+              <execution>
+                <phase>package</phase>
+                <goals>
+                  <goal>shade</goal>
+                </goals>
+                <configuration>
+                  <shadedArtifactAttached>true</shadedArtifactAttached>
+                  <shadedClassifierName>all</shadedClassifierName>
+                  <createDependencyReducedPom>false</createDependencyReducedPom>
+                  <filters>
+                    <filter>
+                      <artifact>*:*</artifact>
+                      <excludes>
+                        <exclude>META-INF/*.SF</exclude>
+                        <exclude>META-INF/*.DSA</exclude>
+                        <exclude>META-INF/*.RSA</exclude>
+                      </excludes>
+                    </filter>
+                  </filters>
+                  <transformers>
+                    <transformer
+                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                    <transformer
+                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                      <mainClass>com.sales.SalesAnalysisApplication</mainClass>
+                    </transformer>
+                  </transformers>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
