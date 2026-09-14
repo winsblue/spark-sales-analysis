@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.sales.server.mapper.AnalysisMapper">
+
+    <!-- ============================================================
+         公共 SQL 片段：多维筛选条件
+         ============================================================ -->
+
+    <!-- 明细表筛选条件（用于只有效订单的维度统计） -->
+    <sql id="dwdDimWhere">
+        <if test="q.startDate != null and q.startDate != ''">
+            AND stat_date &gt;= #{q.startDate}
+        </if>
+        <if test="q.endDate != null and q.endDate != ''">
+            AND stat_date &lt;= #{q.endDate}
+        </if>
+        <if test="q.channel != null and q.channel != ''">
+            AND channel = #{q.channel}
+        </if>
+        <if test="q.categoryName != null and q.categoryName != ''">
+            AND category_name = #{q.categoryName}
+        </if>
+        <if test="q.province != null and q.province != ''">
+            AND province = #{q.province}
+        </if>
+        <if test="q.payType != null and q.payType != ''">
+            AND pay_type = #{q.payType}
+        </if>
+        <if test="q.onlyValid != null and q.onlyValid == 1">
+            AND is_valid_order = 1
+        </if>
+    </sql>
+
+    <!--
+      趋势与总览的筛选条件：不能直接过滤 is_valid_order，
+      因为"下单量"需要包含取消/退款订单，有效性通过 CASE WHEN 区分统计。
+    -->
+    <sql id="dwdTrendWhere">
+        <if test="q.startDate != null and q.startDate != ''">
+            AND stat_date &gt;= #{q.startDate}
+        </if>
+        <if test="q.endDate != null and q.endDate != ''">
+            AND stat_date &lt;= #{q.endDate}
+        </if>
+        <if test="q.channel != null and q.channel != ''">
+            AND channel = #{q.channel}
+        </if>
+        <if test="q.categoryName != null and q.categoryName != ''">
+            AND category_name = #{q.categoryName}
+        </if>
+        <if test="q.province != null and q.province != ''">
+            AND province = #{q.province}
+        </if>
+        <if test="q.payType != null and q.payType != ''">
+            AND pay_type = #{q.payType}
+        </if>
+    </sql>
+
+    <!-- 有效订单的五个核心度量 -->
+    <sql id="dwdMeasures">
+        SUM(pay_amount)                    AS gmv,
+        SUM(quantity)                      AS salesQty,
+        COUNT(DISTINCT order_id)           AS orderCnt,
+        COUNT(DISTINCT user_id)            AS buyerCnt
+    </sql>
+
+    <!-- ============================================================
+         一、ADS 预计算路径（默认视图：仅按日期范围筛选，读取预计算结果）
+         ============================================================ -->
+
+    <select id="selectOverviewFromAds" resultType="com.sales.server.entity.AdsOverview">
+        SELECT kpi_code, kpi_name, kpi_value, kpi_unit, kpi_desc, stat_date, batch_id
+        FROM ads_overview
+        ORDER BY id
+    </select>
+
+    <select id="selectProductRankFromAds" resultType="com.sales.server.vo.ProductRankVO">
+        SELECT product_id        AS productId,
+               MAX(product_name)  AS productName,
+               MAX(category_name) AS categoryName,
+               MAX(brand)         AS brand,
+               SUM(gmv)           AS gmv,
+               SUM(sales_qty)     AS salesQty,
+               SUM(order_cnt)     AS orderCnt
+        FROM ads_product_stat
+        WHERE 1 = 1
+        <if test="q.startDate != null and q.startDate != ''">
+            AND stat_date &gt;= #{q.startDate}
+        </if>
+        <if test="q.endDate != null and q.endDate != ''">
+            AND stat_date &lt;= #{q.endDate}
+        </if>
+        GROUP BY product_id
+        ORDER BY gmv DESC
+        <if test="q.limit != null and q.limit &gt; 0">
+            LIMIT #{q.limit}
+        </if>
+    </select>
+
+    <select id="selectTrendFromAds" resultType="com.sales.server.vo.TrendPointVO">        SELECT stat_date        AS statDate,
+               order_cnt        AS orderCnt,
+               valid_order_cnt  AS validOrderCnt,
+               gmv              AS gmv,
+               sales_qty        AS salesQty,
+               buyer_cnt        AS buyerCnt,
+               avg_order_amount AS avgOrderAmount,
+               refund_order_cnt AS refundOrderCnt,
+               refund_rate      AS refundRate
+        FROM ads_daily_trend
+        WHERE 1 = 1
+        <if test="q.startDate != null and q.startDate != ''">
+            AND stat_date &gt;= #{q.startDate}
+        </if>
+        <if test="q.endDate != null and q.endDate != ''">
+            AND stat_date &lt;= #{q.endDate}
+        </if>
+        ORDER BY stat_date
+    </select>
+
+    <!-- ============================================================
+         二、DWD 即席聚合路径（支持日期、渠道、类目、省份任意组合）
+         ============================================================ -->
+
+    <select id="selectTrendFromDwd" resultType="com.sales.server.vo.TrendPointVO">
+        SELECT stat_date                                                       AS statDate,
+               COUNT(DISTINCT order_id)                                        AS orderCnt,
+               COUNT(DISTINCT CASE WHEN is_valid_order = 1 THEN order_id END)   AS validOrderCnt,
+               SUM(CASE WHEN is_valid_order = 1 THEN pay_amount ELSE 0 END)     AS gmv,
+               SUM(CASE WHEN is_valid_order = 1 THEN quantity ELSE 0 END)       AS salesQty,
+               COUNT(DISTINCT CASE WHEN is_valid_order = 1 THEN user_id END)    AS buyerCnt,
+               SUM(CASE WHEN is_valid_order = 1 THEN pay_amount ELSE 0 END)
+                   / NULLIF(COUNT(DISTINCT CASE WHEN is_valid_order = 1 THEN order_id END), 0)
+                                                                               AS avgOrderAmount,
+               COUNT(DISTINCT CASE WHEN order_status = '已退款' THEN order_id END) AS refundOrderCnt,
+               COUNT(DISTINCT CASE WHEN order_status = '已退款' THEN order_id END)
+                   / NULLIF(COUNT(DISTINCT order_id), 0)                       AS refundRate
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdTrendWhere"/>
+        GROUP BY stat_date
+        ORDER BY stat_date
+    </select>
+
+    <select id="selectOverviewFromDwd" resultType="java.util.Map">
+        SELECT SUM(CASE WHEN is_valid_order = 1 THEN pay_amount ELSE 0 END)          AS gmv,
+               COUNT(DISTINCT order_id)                                             AS orderCnt,
+               COUNT(DISTINCT CASE WHEN is_valid_order = 1 THEN order_id END)        AS validOrderCnt,
+               SUM(CASE WHEN is_valid_order = 1 THEN quantity ELSE 0 END)            AS salesQty,
+               COUNT(DISTINCT CASE WHEN is_valid_order = 1 THEN user_id END)         AS buyerCnt,
+               SUM(CASE WHEN is_valid_order = 1 THEN quantity * unit_price ELSE 0 END) AS grossAmount,
+               SUM(CASE WHEN is_valid_order = 1 THEN discount_amount ELSE 0 END)     AS discountAmount,
+               COUNT(DISTINCT CASE WHEN order_status = '已退款' THEN order_id END)    AS refundOrderCnt
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdTrendWhere"/>
+    </select>
+
+    <select id="selectCategoryStat" resultType="com.sales.server.vo.MetricItemVO">
+        SELECT category_name AS name,
+        <include refid="dwdMeasures"/>
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdDimWhere"/>
+        GROUP BY category_name
+        ORDER BY gmv DESC
+        <if test="q.limit != null and q.limit &gt; 0">
+            LIMIT #{q.limit}
+        </if>
+    </select>
+
+    <select id="selectProductRank" resultType="com.sales.server.vo.ProductRankVO">
+        SELECT product_id    AS productId,
+               product_name  AS productName,
+               category_name AS categoryName,
+               brand         AS brand,
+               SUM(pay_amount)          AS gmv,
+               SUM(quantity)            AS salesQty,
+               COUNT(DISTINCT order_id) AS orderCnt
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdDimWhere"/>
+        GROUP BY product_id, product_name, category_name, brand
+        ORDER BY gmv DESC
+        <if test="q.limit != null and q.limit &gt; 0">
+            LIMIT #{q.limit}
+        </if>
+    </select>
+
+    <select id="selectChannelStat" resultType="com.sales.server.vo.MetricItemVO">
+        SELECT channel AS name,
+        <include refid="dwdMeasures"/>
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdDimWhere"/>
+        GROUP BY channel
+        ORDER BY gmv DESC
+    </select>
+
+    <select id="selectPaytypeStat" resultType="com.sales.server.vo.MetricItemVO">
+        SELECT pay_type AS name,
+        <include refid="dwdMeasures"/>
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdDimWhere"/>
+        GROUP BY pay_type
+        ORDER BY gmv DESC
+    </select>
+
+    <select id="selectRegionStat" resultType="com.sales.server.vo.MetricItemVO">
+        SELECT province AS name,
+        <include refid="dwdMeasures"/>
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdDimWhere"/>
+        GROUP BY province
+        ORDER BY gmv DESC
+        <if test="q.limit != null and q.limit &gt; 0">
+            LIMIT #{q.limit}
+        </if>
+    </select>
+
+    <select id="selectChannelCategory" resultType="com.sales.server.vo.ChannelCategoryVO">
+        SELECT channel       AS channel,
+               category_name AS categoryName,
+               SUM(pay_amount)          AS gmv,
+               COUNT(DISTINCT order_id) AS orderCnt
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdDimWhere"/>
+        GROUP BY channel, category_name
+        ORDER BY channel, gmv DESC
+    </select>
+
+    <!-- ============================================================
+         三、数据一致性校验：ADS 预计算值 vs DWD 实时汇总值
+         说明：仅校验可加指标（GMV、销售件数、有效订单量、类目 GMV 合计）；
+               用户数属于不可加指标，跨天求和会重复计数，故不参与校验。
+         ============================================================ -->
+
+    <select id="sumTrendFromAds" resultType="java.util.Map">
+        SELECT SUM(gmv)             AS gmv,
+               SUM(sales_qty)       AS salesQty,
+               SUM(valid_order_cnt) AS validOrderCnt
+        FROM ads_daily_trend
+    </select>
+
+    <select id="sumFromDwd" resultType="java.util.Map">
+        SELECT SUM(CASE WHEN is_valid_order = 1 THEN pay_amount ELSE 0 END)      AS gmv,
+               SUM(CASE WHEN is_valid_order = 1 THEN quantity ELSE 0 END)        AS salesQty,
+               COUNT(DISTINCT CASE WHEN is_valid_order = 1 THEN order_id END)    AS validOrderCnt
+        FROM dwd_order_detail
+    </select>
+
+    <select id="sumCategoryGmvFromAds" resultType="java.math.BigDecimal">
+        SELECT SUM(gmv) FROM ads_category_stat
+    </select>
+
+    <select id="sumCategoryGmvFromDwd" resultType="java.math.BigDecimal">
+        SELECT SUM(CASE WHEN is_valid_order = 1 THEN pay_amount ELSE 0 END)
+        FROM dwd_order_detail
+    </select>
+
+    <!-- ============================================================
+         四、筛选条件候选项
+         维度取值从 ADS 预计算表读取（数据量小、响应快），
+         避免每次打开页面都对 19 万行明细表做 DISTINCT 扫描。
+         ============================================================ -->
+
+    <select id="selectDateRange" resultType="java.util.Map">
+        SELECT DATE_FORMAT(MIN(stat_date), '%Y-%m-%d') AS minDate,
+               DATE_FORMAT(MAX(stat_date), '%Y-%m-%d') AS maxDate
+        FROM ads_daily_trend
+    </select>
+
+    <select id="selectChannels" resultType="java.lang.String">
+        SELECT DISTINCT channel FROM ads_channel_stat
+        WHERE channel IS NOT NULL AND channel &lt;&gt; ''
+        ORDER BY channel
+    </select>
+
+    <select id="selectCategories" resultType="java.lang.String">
+        SELECT DISTINCT category_name FROM ads_category_stat
+        WHERE category_name IS NOT NULL AND category_name &lt;&gt; ''
+        ORDER BY category_name
+    </select>
+
+    <select id="selectProvinces" resultType="java.lang.String">
+        SELECT DISTINCT province FROM ads_region_stat
+        WHERE province IS NOT NULL AND province &lt;&gt; ''
+        ORDER BY province
+    </select>
+
+    <select id="selectPayTypes" resultType="java.lang.String">
+        SELECT DISTINCT pay_type FROM ads_paytype_stat
+        WHERE pay_type IS NOT NULL AND pay_type &lt;&gt; ''
+        ORDER BY pay_type
+    </select>
+
+</mapper>
