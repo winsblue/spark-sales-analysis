@@ -1,0 +1,22 @@
+{
+  "name": "sales-analysis-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "电商商品销售分析平台前端：Vue3 + Vite + ECharts",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5173"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "echarts": "^5.5.0",
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.8"
+  }
+}
