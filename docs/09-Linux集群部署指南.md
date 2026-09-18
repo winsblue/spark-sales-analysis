@@ -421,11 +421,28 @@ yarn logs -applicationId application_xxxxxxxxxxxx_0001 | grep -E "数据清洗�
 
 ```bash
 # ④ 在结果库中确认指标
-mysql -h <mysql-host> -uroot -p sales_analysis -e "
-  SELECT kpi_name, kpi_value, kpi_unit FROM ads_overview ORDER BY id;
-  SELECT compute_mode, duration_ms, input_rows, output_rows FROM etl_job_log ORDER BY id;
-  SELECT raw_cnt, valid_cnt, discard_cnt, quality_score FROM ads_clean_stat;"
+#    注意：mysql -e "..." 里的 SQL 必须写成一行。
+#    如果 SQL 换行，cmd 会停在 More? 等待输入，看起来像"命令没反应"。
+mysql -h <mysql-host> -uroot -p sales_analysis -e "SELECT (SELECT COUNT(*) FROM dwd_order_detail) AS dwd_rows, (SELECT COUNT(*) FROM ads_overview) AS overview_rows, (SELECT COUNT(*) FROM etl_job_log) AS joblog_rows;"
+
+mysql -h <mysql-host> -uroot -p sales_analysis -e "SELECT kpi_name, kpi_value, kpi_unit FROM ads_overview ORDER BY id;"
+
+mysql -h <mysql-host> -uroot -p sales_analysis -e "SELECT compute_mode, duration_ms, input_rows, output_rows FROM etl_job_log ORDER BY id;"
+
+mysql -h <mysql-host> -uroot -p sales_analysis -e "SELECT raw_cnt, valid_cnt, discard_cnt, quality_score FROM ads_clean_stat;"
 ```
+
+> **用 `COUNT(*)` 打头的原因**：普通 `SELECT` 在零行结果时**不打印任何内容**，容易被误判成"命令没反应"；
+> 而 `COUNT(*)` 一定会输出 `0`，能立刻区分"命令出错"和"表是空的"。
+>
+> **查出来是 `0 0 0` 怎么办？** 不是命令坏了，是表里确实没数据：
+> 1. `01_schema.sql` 用 `DROP TABLE IF EXISTS` + `CREATE TABLE`（保证作业可反复运行），
+>    所以只要作业启动过一次，结果表就会被重建清空，**必须等作业跑完才会写回**；
+> 2. 或者作业还没成功（例如 HDFS 上传因安全模式失败，读到空数据源就退出了）。
+>
+> 排查顺序：先确认 HDFS 上有数据（`hdfs dfs -ls /sales/raw`），再确认作业日志里出现
+> `有效记录数 : 193061`，最后才查库。若只是想立刻恢复看板演示，回到 Windows 重跑
+> `scripts\run-etl.cmd --mode=both` 即可完整恢复。
 
 ### 集群模式典型输出
 
