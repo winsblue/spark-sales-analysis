@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  在 Linux 大数据环境中提交 Spark 离线分析作业（集群模式）
+#  在 Linux 大数据环境中提交 Spark 离线分析作业
 #
-#  默认提交到 YARN（client 模式）。执行前请确认：
-#      1. HDFS 与 YARN 已启动（hdfs 正常、yarn 正常）
-#      2. 已执行 scripts/linux/upload-to-hdfs.sh 上传数据
-#      3. spark-job.properties 中 data.raw.dir 指向 HDFS 路径，
-#         jdbc.url 指向集群各节点都能访问的 MySQL
+#  默认使用 local[*]（Spark 装在 Linux 环境里、用满本机 CPU 核）：
+#    - 本项目验证过的就是这条路径，代码零改动即可跑通
+#    - 不需要 HDFS/YARN 协议与 Spark 版本完全匹配，风险最小
+#  若集群规模足够且版本匹配，可改用 MASTER=yarn 真正提交到 YARN：
+#    MASTER=yarn DEPLOY_MODE=client scripts/linux/run-etl-cluster.sh
+#
+#  执行前请确认：
+#      1. Spark 已安装（scripts/linux/setup-spark.sh）
+#      2. 若要读 HDFS：Hadoop 已启动，且已执行 upload-to-hdfs.sh
+#      3. jdbc.url 指向 Linux 环境能访问到的 MySQL
 #
 #  执行方式（在项目根目录）：
-#      scripts/linux/run-etl-cluster.sh                # 覆盖 YARN，两种计算方式
-#      scripts/linux/run-etl-cluster.sh --mode=df      # 只跑 DataFrame
-#      MASTER=spark://node1:7077 scripts/linux/run-etl-cluster.sh   # 独立集群模式
+#      scripts/linux/run-etl-cluster.sh                       # local[*]，两种计算方式
+#      scripts/linux/run-etl-cluster.sh --mode=df             # 只跑 DataFrame 方式
+#      MASTER=yarn scripts/linux/run-etl-cluster.sh           # 提交到 YARN
+#      MASTER=spark://hadoop:7077 scripts/linux/run-etl-cluster.sh   # 独立集群模式
 # =====================================================================
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SPARK_HOME="${SPARK_HOME:-/opt/module/spark}"
-MASTER="${MASTER:-yarn}"
+MASTER="${MASTER:-local[*]}"
 DEPLOY_MODE="${DEPLOY_MODE:-client}"
 JAR="${JAR:-${PROJECT_ROOT}/spark-job/target/spark-job-1.0.0-cluster.jar}"
 CONF="${CONF:-${PROJECT_ROOT}/spark-job/src/main/resources/spark-job.properties}"
@@ -35,9 +41,23 @@ if [ ! -f "${JAR}" ]; then
 fi
 [ -f "${JAR}" ] || fail "构建后仍未找到 ${JAR}"
 
+# 只有 yarn / standalone / spark:// 支持 --deploy-mode，local 模式传了会直接报错
+EXTRA_ARGS=()
+case "${MASTER}" in
+  yarn|standalone|spark://*)
+    EXTRA_ARGS+=( --deploy-mode "${DEPLOY_MODE}" )
+    ;;
+  *)
+    log "MASTER=${MASTER} 为本地模式，不传 --deploy-mode"
+    ;;
+esac
+
+# shuffle 分区数：本地模式按 CPU 核数即可；集群模式建议 executor 核数 × 2~3
+SHUFFLE_PARTITIONS="${SHUFFLE_PARTITIONS:-4}"
+
 log "Spark 提交参数"
+log "  SPARK_HOME  = ${SPARK_HOME}"
 log "  MASTER      = ${MASTER}"
-log "  DEPLOY_MODE = ${DEPLOY_MODE}"
 log "  JAR         = ${JAR}"
 log "  CONF        = ${CONF}"
 log "  业务参数    = $*"
@@ -45,12 +65,12 @@ log "  业务参数    = $*"
 "${SPARK_HOME}/bin/spark-submit" \
   --class com.sales.SalesAnalysisApplication \
   --master "${MASTER}" \
-  --deploy-mode "${DEPLOY_MODE}" \
+  "${EXTRA_ARGS[@]}" \
   --name spark-sales-analysis \
   --files "${CONF}" \
   --conf spark.driver.extraJavaOptions="-Dconfig.file=spark-job.properties" \
   --conf spark.executor.extraJavaOptions="-Dconfig.file=spark-job.properties" \
-  --conf spark.sql.shuffle.partitions=12 \
+  --conf spark.sql.shuffle.partitions="${SHUFFLE_PARTITIONS}" \
   --conf spark.driver.memory=1g \
   --conf spark.executor.memory=2g \
   --conf spark.executor.cores=2 \

@@ -10,6 +10,134 @@
 
 ---
 
+## 0. 本机实测环境参数（2026-09-21 探明，可直接照抄）
+
+> 本节是把虚拟机的真实参数探测出来后补上的。实际部署时**优先按本节取值**，后面章节仅作通用说明。
+
+### 0.1 虚拟机配置
+
+| 项目 | 实测值 | 获取方式 |
+| --- | --- | --- |
+| 虚拟机文件 | `D:\VMs\hadoop\hadoop.vmx` | 宿主机搜索 `*.vmx` |
+| 显示名 / 系统 | `hadoop` / `ubuntu-64`（Ubuntu 64 位） | `.vmx` 中 `displayName`、`guestOS` |
+| 配置 | **4 vCPU / 8 GB 内存** | `.vmx` 中 `numvcpus`、`memsize` |
+| 网络类型 | **NAT**（VMnet8） | `.vmx` 中 `ethernet0.connectionType` |
+| **虚拟机 IP** | **`192.168.10.128`** | VMware DHCP 租约 `C:\ProgramData\VMware\vmnetdhcp.leases` + `~/.ssh/known_hosts` |
+| 虚拟机主机名 | `hadoop-VMware-Virtual-Platform` | DHCP 租约中 `client-hostname` |
+| 宿主机 VMnet8 地址 | **`192.168.10.1`** | `Get-NetIPAddress` |
+
+**节点数量：单节点（伪分布式）**
+`192.168.10.100 / 102 / 104` 均不通，仅 `.128` 存活；`Documents\Virtual Machines` 下的
+`hadoop1`、`hadoop2` 两个虚拟机文件时间是 2025-04 且带 `autoinst.iso`（安装过程残留），已废弃。
+→ **按单节点伪分布式部署即可。**
+
+### 0.2 已安装组件
+
+| 组件 | 版本 | 判断依据 |
+| --- | --- | --- |
+| **Hadoop** | **3.1.3** | `D:\尚硅谷hadoop\资料\资料\04_jar包\hadoop-3.1.3.tar.gz`、`06_Windows依赖\hadoop-3.1.0`、`05_linux环境编译源码\hadoop-3.1.3-src.tar.gz` |
+| JDK | **8u212** | `04_jar包\jdk-8u212-linux-x64.tar.gz`（与本项目 JDK 8 完全匹配） |
+| 课程体系 | 尚硅谷 Hadoop 3.x（原始模板为 CentOS 7.5） | `资料\02_linux7.5镜像\CentOS-7.5-x86_64-DVD-1804.tmp` |
+| **Spark** | **未安装** | 端口 7077（Master）/ 4040（UI）均不通 |
+| **Hadoop 服务** | **当前未启动** | 端口 8088（YARN RM）/ 9870、50070（HDFS NN）均不通 |
+
+> 部署前请先登录虚拟机启动集群：
+> ```bash
+> start-dfs.sh && start-yarn.sh
+> jps     # 确认 NameNode / DataNode / ResourceManager / NodeManager 都在
+> ```
+
+### 0.3 结果库（MySQL）连通性 —— 已实测可用，宿主机零改动
+
+| 检查项 | 实测结果 | 结论 |
+| --- | --- | --- |
+| MySQL 监听地址 | `0.0.0.0:3306` | 监听全部网卡，非仅本机 ✅ |
+| 远程账号 | `root@%` 已存在 | 无需再执行 `GRANT` ✅ |
+| 防火墙入站规则 | `MySQL Server`，TCP 3306，Allow | 已放行 ✅ |
+| Windows 网络位置 | VMnet8 未分类 → 按 Public 处理 | 规则 Profile=Public 正好生效 ✅ |
+| **远程连接实测** | 经 `192.168.10.1:3306` + `root/123456` 连接成功，读到 `dwd_order_detail` 共 193,061 行 | **VM 侧可直接写库** ✅ |
+
+**因此虚拟机里 `spark-job.properties` 的数据库地址直接填：**
+
+```properties
+jdbc.url=jdbc:mysql://192.168.10.1:3306/sales_analysis?useUnicode=true&characterEncoding=utf8&useSSL=false
+jdbc.user=root
+jdbc.password=123456
+```
+
+> `192.168.10.1` 是宿主机在 VMnet8（NAT）上的地址，NAT 模式下虚拟机可直接访问。
+> 若虚拟机内连不上，先在里面执行 `telnet 192.168.10.1 3306` 排查网络。
+
+### 0.4 Spark 版本选择的重要提醒
+
+本机 Hadoop 是 **3.1.3（2018 年版本）**，而 Spark 3.5.x 自带 `hadoop-client` 为 **3.3.4**，
+属于"新客户端连旧服务端"，**上 YARN 存在兼容风险**（YARN ApplicationMaster 协议在 Hadoop 3.x 中变更过）。
+
+按稳妥程度排序选择运行方式：
+
+| 方案 | 做法 | 优点 | 风险 |
+| --- | --- | --- | --- |
+| **① 推荐** | Spark 装进虚拟机，用 `--master local[*]`；数据源走 **HDFS**，结果写宿主机 MySQL | 用上了 HDFS（体现大数据环境）；完全不碰 YARN 协议兼容性；4 vCPU/8GB 单节点跑 `local[*]` 性能最好 | 计算非分布式（但满足"基础—提高"要求） |
+| ② 折中 | 同 ①，`data.raw.dir` 留本地路径 | 链路最短，最快跑通 | 没体现 HDFS |
+| ③ 保守上 YARN | 降级到 Spark 3.1.x / 3.2.x（自带 hadoop-client 更接近 3.1.3） | 能真正跑分布式 | 需自行验证；单节点 YARN 资源紧张 |
+| ④ 直接用 3.5.1 上 YARN | 不做版本调整 | 版本最新 | **可能 AM/Container 协议不兼容**，需调参 |
+
+> 本项目在 Windows 上验证的就是 `local[*]` 路径（20 万行 36.6 秒完成），
+> 所以**方案 ① 是把已验证代码原样搬到 Linux 的最短路径**，答辩演示最稳。
+> 若指导教师明确要求"必须提交到 YARN"，再走方案 ③。
+
+### 0.5 本机可直接照抄的操作序列（推荐方案 ①）
+
+先把项目目录从宿主机拷进虚拟机（推荐用 Xftp，或虚拟机内直接 `git clone`），然后：
+
+```bash
+# ---------- ① 检查环境（先确认 Hadoop 3.1.3 与 JDK8 可用）----------
+hadoop version | head -3
+java -version
+echo $HADOOP_HOME $HADOOP_CONF_DIR
+start-dfs.sh && start-yarn.sh      # 若集群没起
+jps
+hdfs getconf -confKey fs.defaultFS  # 记下这个值，下一步要用
+
+# ---------- ② 安装 Spark ----------
+cd spark-sales-analysis
+chmod +x scripts/linux/*.sh
+sudo ./scripts/linux/setup-spark.sh
+source /etc/profile
+spark-submit --version
+
+# ---------- ③ 验证虚拟机能否连上宿主机的 MySQL ----------
+#   若这条能连上，后面作业写库就不会有问题
+mysql -h 192.168.10.1 -uroot -p123456 -e "SELECT COUNT(*) FROM sales_analysis.dwd_order_detail;"
+
+# ---------- ④ 生成模拟数据并上传到 HDFS ----------
+mvn -B -pl spark-job -am -Pcluster-package clean package -DskipTests
+java -cp spark-job/target/spark-job-1.0.0-cluster.jar com.sales.SalesAnalysisApplication --generate
+export HDFS_BASE_DIR=/sales/raw
+scripts/linux/upload-to-hdfs.sh
+
+# ---------- ⑤ 改配置（三处，其它不动）----------
+#   data.raw.dir = hdfs://192.168.10.128:8020/sales/raw     （用 ① 里 getconf 得到的值）
+#   spark.master =                                          （留空）
+#   jdbc.url     = jdbc:mysql://192.168.10.1:3306/sales_analysis?useUnicode=true&characterEncoding=utf8&useSSL=false
+#   hadoop.home.dir =                                       （留空）
+
+# ---------- ⑥ 提交作业（推荐 local[*]，稳；要先跳过 ODS 装载以省时间）----------
+MASTER='local[*]' scripts/linux/run-etl-cluster.sh --mode=both --no-ods
+
+# ---------- ⑦ 验证结果 ----------
+mysql -h 192.168.10.1 -uroot -p123456 sales_analysis -e "
+  SELECT kpi_name, kpi_value, kpi_unit FROM ads_overview ORDER BY id;
+  SELECT compute_mode, duration_ms, input_rows FROM etl_job_log ORDER BY id;"
+```
+
+> 注意：`run-etl-cluster.sh` 的 `MASTER` 默认已是 **`local[*]`**（见 0.4 节方案 ①），
+> 所以上面不需要额外设置 MASTER；要上 YARN 才显式写 `MASTER=yarn`。
+> 若 `hdfs getconf -confKey fs.defaultFS` 返回的是 `file:///`，说明 `core-site.xml` 的
+> `fs.defaultFS` 没配成 HDFS，需要先把 Hadoop 配好（这一步属于 Hadoop 环境问题，不在本项目范围内）。
+
+---
+
 ## 1. 前置条件检查
 
 在虚拟机上执行以下命令，确认 Hadoop 环境可用：
@@ -163,7 +291,7 @@ hdfs dfs -ls -h /sales/raw
 
 ```properties
 # ① 数据源改为 HDFS 路径（用第 4 步打印出的地址）
-data.raw.dir=hdfs://node1:8020/sales/raw
+data.raw.dir=hdfs://192.168.10.128:8020/sales/raw
 
 # ② Spark 运行模式留空 —— 由 spark-submit --master 决定
 spark.master=
@@ -184,9 +312,9 @@ hadoop.home.dir=
 
 | 方案 | 说明 | 需注意 |
 | --- | --- | --- |
-| MySQL 装在 NameNode 节点 | 最简单，`jdbc.url` 填本机或内网 IP | 需保证所有 NodeManager 节点都能连上该端口 |
-| MySQL 装在 Windows 宿主机 | 沿用现有环境 | 虚拟机需能访问宿主机 IP（NAT 模式下用宿主机内网 IP），并放开 Windows 防火墙 3306 端口 |
-| MySQL 装在独立服务器 | 生产推荐 | 同上，注意网络互通与账号授权（`GRANT ... TO 'root'@'%'`） |
+| **MySQL 装在 Windows 宿主机（本项目实测方案，推荐）** | 沿用现有环境，`jdbc.url` 填 **`192.168.10.1:3306`** | 已实测可用，宿主机无需任何改动（详见 0.3 节） |
+| MySQL 装在虚拟机内 | 需在虚拟机里另装一套 MySQL | 要重跑一次建库；虚拟机磁盘会再占几 GB |
+| MySQL 装在独立服务器 | 生产推荐 | 注意网络互通与账号授权（`GRANT ... TO 'root'@'%'`） |
 
 > **重要**：Spark 的 executor 分布在多个节点，**每个节点都必须能访问 MySQL**，
 > 因为结果数据是由 executor 直接通过 JDBC 写入的。若无法互通，可改为"先写 HDFS、再单独导入 MySQL"。
@@ -208,20 +336,23 @@ FLUSH PRIVILEGES;
 ```bash
 cd spark-sales-analysis
 
-# 默认提交到 YARN（client 模式），两种计算方式都会跑
+# 默认使用 local[*]（推荐，两种计算方式都会跑）
 scripts/linux/run-etl-cluster.sh
 
 # 只跑 DataFrame 方式
 scripts/linux/run-etl-cluster.sh --mode=df
 
-# 跳过 ODS 装载
+# 跳过 ODS 装载（数据已入库时用，可省约 15 秒）
 scripts/linux/run-etl-cluster.sh --no-ods
 
+# 提交到 YARN（client 模式；注意 Hadoop 3.1.3 的版本兼容风险，见 0.4 节）
+MASTER=yarn scripts/linux/run-etl-cluster.sh
+
 # 使用 Spark 独立集群（Standalone）模式
-MASTER=spark://node1:7077 scripts/linux/run-etl-cluster.sh
+MASTER=spark://hadoop:7077 scripts/linux/run-etl-cluster.sh
 
 # 使用 YARN cluster 模式（Driver 也在集群里跑）
-DEPLOY_MODE=cluster scripts/linux/run-etl-cluster.sh
+MASTER=yarn DEPLOY_MODE=cluster scripts/linux/run-etl-cluster.sh
 ```
 
 脚本内部等价于：
@@ -273,7 +404,7 @@ mysql -h <mysql-host> -uroot -p sales_analysis -e "
 
 ```
 [Main] Spark 版本：3.5.1，运行模式：由 spark-submit 指定
-[Main] 数据源：hdfs://node1:8020/sales/raw/ods_order_detail.csv
+[Main] 数据源：hdfs://192.168.10.128:8020/sales/raw/ods_order_detail.csv
 [OdsLoader] ods_order_detail 装载 200177 行
 ---------------- 数据清洗统计 ----------------
 原始记录数        : 200177
@@ -301,7 +432,7 @@ RDD          ...
 # 步骤 1：确认 HDFS 有数据
 hdfs dfs -ls -h /sales/raw
 
-# 步骤 2：提交离线作业，观察 YARN 上起任务
+# 步骤 2：提交离线作业（默认 local[*]，在 Linux 环境里跑 Spark）
 scripts/linux/run-etl-cluster.sh --mode=both
 
 # 步骤 3：确认结果已入库
