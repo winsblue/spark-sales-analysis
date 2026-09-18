@@ -29,6 +29,7 @@ JAR="${JAR:-${PROJECT_ROOT}/spark-job/target/spark-job-1.0.0-cluster.jar}"
 CONF="${CONF:-${PROJECT_ROOT}/spark-job/src/main/resources/spark-job.properties}"
 
 log()  { echo -e "\033[32m[run-etl-cluster]\033[0m $*"; }
+warn() { echo -e "\033[33m[run-etl-cluster][WARN]\033[0m $*"; }
 fail() { echo -e "\033[31m[run-etl-cluster][ERROR]\033[0m $*"; exit 1; }
 
 [ -x "${SPARK_HOME}/bin/spark-submit" ] || fail "未找到 ${SPARK_HOME}/bin/spark-submit，请先执行 scripts/linux/setup-spark.sh"
@@ -49,10 +50,23 @@ fi
 # ---------------------------------------------------------------------
 cd "${PROJECT_ROOT}"
 cp -f "${CONF}" "${PROJECT_ROOT}/spark-job.properties"
+RAW_DIR="$(grep -E '^data.raw.dir=' "${PROJECT_ROOT}/spark-job.properties" | head -1 | cut -d= -f2-)"
 log "已把配置同步到 ${PROJECT_ROOT}/spark-job.properties"
-log "  当前 data.raw.dir = $(grep -E '^data.raw.dir=' "${PROJECT_ROOT}/spark-job.properties" | cut -d= -f2-)"
-log "  当前 jdbc.url     = $(grep -E '^jdbc.url=' "${PROJECT_ROOT}/spark-job.properties" | cut -d= -f2-)"
+log "  当前 data.raw.dir = ${RAW_DIR}"
+log "  当前 jdbc.url     = $(grep -E '^jdbc.url=' "${PROJECT_ROOT}/spark-job.properties" | head -1 | cut -d= -f2-)"
 log "  如需修改：直接编辑该文件后重新执行本脚本即可"
+
+# 数据源是不是远端文件系统？不是的话给个明确提醒，避免"跑通了但没用上 HDFS"这种无声偏差
+case "${RAW_DIR}" in
+  hdfs://*|viewfs://*|s3a://*|s3://*|oss://*) ;;
+  *)
+    warn "data.raw.dir=${RAW_DIR} 不是 HDFS 路径。"
+    warn "  → 作业会读取本机 ${RAW_DIR} 目录下的 csv（能跑通，但没用到 HDFS）。"
+    warn "  → 想走 HDFS，请在 ${CONF} 中改成："
+    warn "      data.raw.dir=$(hdfs getconf -confKey fs.defaultFS 2>/dev/null || echo 'hdfs://<namenode>:8020')/sales/raw"
+    warn "  → 改完重新执行本脚本即可（脚本每次都会把配置同步到工作目录）。"
+    ;;
+esac
 
 # 只有 yarn / standalone / spark:// 支持 --deploy-mode，local 模式传了会直接报错
 EXTRA_ARGS=()
