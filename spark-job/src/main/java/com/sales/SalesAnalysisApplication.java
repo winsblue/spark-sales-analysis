@@ -133,12 +133,18 @@ public class SalesAnalysisApplication {
                 OdsLoader.loadProducts(spark, config, currentBatchId());
             }
 
+            List<RoundSnapshot> rounds = new ArrayList<>();
             if ("df".equals(mode) || "dataframe".equals(mode) || "both".equals(mode)) {
-                runPipeline(spark, config, sink, MODE_DATAFRAME);
+                rounds.add(runPipeline(spark, config, sink, MODE_DATAFRAME));
             }
             if ("rdd".equals(mode) || "both".equals(mode)) {
-                runPipeline(spark, config, sink, MODE_RDD);
+                rounds.add(runPipeline(spark, config, sink, MODE_RDD));
             }
+
+            // 两轮都跑完后再做一致性比对、再统一写作业日志：
+            // 保证「两种实现的比较记录都保留」，且明确写出哪一轮的结果被发布给看板
+            String verdict = compareRounds(rounds);
+            writeJobLogs(sink, rounds, verdict);
 
             printComparisonSummary(sink);
             printResultPreview(sink);
@@ -153,8 +159,8 @@ public class SalesAnalysisApplication {
     // 单次计算流程
     // ==================================================================
 
-    private static void runPipeline(SparkSession spark, JobConfig config, MysqlSink sink,
-                                    String mode) {
+    private static RoundSnapshot runPipeline(SparkSession spark, JobConfig config, MysqlSink sink,
+                                             String mode) {
         String batchId = newBatchId(mode);
         long startMs = System.currentTimeMillis();
         Timestamp startTime = new Timestamp(startMs);
@@ -240,6 +246,11 @@ public class SalesAnalysisApplication {
 
             Dataset<Row> dwd = spark.createDataFrame(r.dwd, Schemas.dwdSchema());
             OdsLoader.writeDwd(spark, config, dwd);
+            // RDD 实现同样必须把「被丢弃的异常记录」落到留痕表，
+            // 否则两种实现的产物不可比（早期版本只写了 DataFrame 那一轮）
+            // 注意：r.rejects 是 JavaRDD，取值用 collect()（不是 Dataset 的 collectAsList()）
+            sink.insertRows("dwd_clean_reject", Schemas.REJECT_COLUMNS, r.rejects.collect());
+            System.out.println("[Main] dwd_clean_reject 写入完成（RDD 方式）");
             outputRows += TableWriter.write(sink, r.overview, "ads_overview", Schemas.OVERVIEW_COLUMNS);
             outputRows += TableWriter.write(sink, r.trend, "ads_daily_trend", Schemas.TREND_COLUMNS);
             outputRows += TableWriter.write(sink, r.category, "ads_category_stat", Schemas.CATEGORY_COLUMNS);
@@ -269,17 +280,150 @@ public class SalesAnalysisApplication {
         });
         sink.insertObjects("ads_clean_stat", CLEAN_STAT_COLUMNS, cleanRows);
 
-        // ---------- 作业日志落库 ----------
-        List<Object[]> logRows = new ArrayList<>();
-        logRows.add(new Object[]{
-                batchId, JOB_NAME, mode, startTime, endTime, durationMs,
-                rawCnt, validCnt + outputRows, "SUCCESS",
-                "清洗耗时 " + cleanDurationMs + "ms；统计与落库耗时 " + (durationMs - cleanDurationMs)
-                        + "ms；ODS 装载为公共前置步骤，不计入本方式耗时"
-        });
-        sink.insertObjects("etl_job_log", JOB_LOG_COLUMNS, logRows);
+        // 作业日志**不在这里落库**：两轮都跑时要等两轮结束、做过一致性比对后再统一写入，
+        // 这样第二轮不会覆盖第一轮的比较记录，日志里也能带上「发布方」与比对结论。
+        RoundSnapshot snap = new RoundSnapshot();
+        snap.mode = mode;
+        snap.batchId = batchId;
+        snap.startTime = startTime;
+        snap.endTime = endTime;
+        snap.durationMs = durationMs;
+        snap.rawCnt = rawCnt;
+        snap.validCnt = validCnt;
+        snap.outputRows = outputRows;
+        snap.cleanDurationMs = cleanDurationMs;
+        // 本轮自己的产物快照 —— 必须现在取，因为下一轮会先 TRUNCATE 掉这些表
+        snap.dwdRows = scalarLong(sink, "SELECT COUNT(*) FROM dwd_order_detail");
+        snap.rejectRows = scalarLong(sink, "SELECT COUNT(*) FROM dwd_clean_reject");
+        snap.adsGmv = scalarDecimal(sink, "SELECT IFNULL(SUM(gmv),0) FROM ads_daily_trend");
+        snap.adsValidOrderCnt = scalarLong(sink,
+                "SELECT IFNULL(SUM(valid_order_cnt),0) FROM ads_daily_trend");
 
-        System.out.println("[" + mode + "] 流程执行完成，总耗时 " + durationMs + " ms");
+        System.out.println("[" + mode + "] 流程执行完成，总耗时 " + durationMs + " ms"
+                + "（本轮产物快照：DWD " + snap.dwdRows + " 行 / 异常 " + snap.rejectRows
+                + " 行 / ADS 趋势 GMV " + snap.adsGmv.toPlainString() + "）");
+        return snap;
+    }
+
+    // ==================================================================
+    // 两轮结果比对与作业日志
+    // ==================================================================
+
+    /**
+     * 两轮实现结果一致性比对。
+     *
+     * <p>每一轮都会先 TRUNCATE 再重写 DWD / ADS，所以<b>最后跑的那一轮才是看板看到的结果</b>。
+     * 这里把两轮各自的产物快照拿出来对比，明确回答两个问题：
+     * 「发布方是谁」以及「两轮结果是否一致」，避免第二轮无意清空第一轮却没人发现。</p>
+     *
+     * @return 一致性结论：单轮返回说明文本，两轮返回 PASS / FAIL
+     */
+    private static String compareRounds(List<RoundSnapshot> rounds) {
+        if (rounds.size() < 2) {
+            return "仅执行单轮（" + rounds.get(0).mode + "），无跨轮比对";
+        }
+        RoundSnapshot a = rounds.get(0);
+        RoundSnapshot b = rounds.get(1);
+        boolean sameRows = a.dwdRows == b.dwdRows && a.rejectRows == b.rejectRows;
+        boolean sameGmv = a.adsGmv.compareTo(b.adsGmv) == 0;
+        boolean sameOrders = a.adsValidOrderCnt == b.adsValidOrderCnt;
+        boolean ok = sameRows && sameGmv && sameOrders;
+
+        System.out.println("\n======================================================");
+        System.out.println("  两轮实现结果一致性比对");
+        System.out.println("======================================================");
+        System.out.printf("%-12s %-14s %-14s %-18s %-14s%n",
+                "轮次", "DWD 行数", "异常行数", "ADS 趋势 GMV", "有效订单量");
+        for (RoundSnapshot s : rounds) {
+            System.out.printf("%-12s %-14d %-14d %-18s %-14d%n",
+                    s.mode, s.dwdRows, s.rejectRows, s.adsGmv.toPlainString(), s.adsValidOrderCnt);
+        }
+        System.out.println("发布方（看板展示的结果）=" + rounds.get(rounds.size() - 1).mode
+                + "（最后写入的一轮）");
+        if (ok) {
+            System.out.println("结论：PASS —— 两种实现的 DWD 行数 / 异常行数 / ADS GMV / 有效订单量完全一致");
+        } else {
+            System.out.println("结论：FAIL —— 两种实现结果不一致，本轮结果不可直接对外使用！");
+            if (!sameRows) {
+                System.out.println("  差异：DWD 或异常行数不一致（"
+                        + a.mode + " DWD=" + a.dwdRows + " 异常=" + a.rejectRows + " / "
+                        + b.mode + " DWD=" + b.dwdRows + " 异常=" + b.rejectRows + "）");
+            }
+            if (!sameGmv) {
+                System.out.println("  差异：ADS 趋势 GMV 不一致（"
+                        + a.mode + "=" + a.adsGmv.toPlainString()
+                        + " / " + b.mode + "=" + b.adsGmv.toPlainString() + "）");
+            }
+            if (!sameOrders) {
+                System.out.println("  差异：ADS 有效订单量不一致（"
+                        + a.mode + "=" + a.adsValidOrderCnt + " / " + b.mode + "=" + b.adsValidOrderCnt + "）");
+            }
+        }
+        return ok ? "PASS" : "FAIL";
+    }
+
+    /**
+     * 统一写作业日志。
+     *
+     * <p>两轮的记录在这里<b>一次性写入</b>，因此第二轮不可能覆盖第一轮的比较记录；
+     * 同时把「本轮回合是否为发布方」与「跨轮比对结论」写进 remark，
+     * 让看板/监控页能直接读懂哪一轮的结果在用、是否可信。</p>
+     */
+    private static void writeJobLogs(MysqlSink sink, List<RoundSnapshot> rounds, String verdict) {
+        RoundSnapshot published = rounds.get(rounds.size() - 1);
+        List<Object[]> logRows = new ArrayList<>();
+        for (RoundSnapshot s : rounds) {
+            boolean isPublished = (s == published);
+            String remark = "清洗耗时 " + s.cleanDurationMs + "ms；统计与落库耗时 "
+                    + (s.durationMs - s.cleanDurationMs) + "ms；ODS 装载为公共前置步骤，不计入本方式耗时"
+                    + "；结果发布：" + (isPublished
+                            ? "是（本轮最后写入，DWD/ADS 即看板展示的结果）"
+                            : "否（对照轮，结果已被后续轮次覆盖）")
+                    + "；跨轮比对：" + verdict;
+            logRows.add(new Object[]{
+                    s.batchId, JOB_NAME, s.mode, s.startTime, s.endTime, s.durationMs,
+                    s.rawCnt, s.validCnt + s.outputRows,
+                    "FAIL".equals(verdict) ? "WARN" : "SUCCESS",
+                    remark});
+        }
+        sink.insertObjects("etl_job_log", JOB_LOG_COLUMNS, logRows);
+    }
+
+    /** 单轮计算的产物快照：用于两轮比对与作业日志落库 */
+    private static class RoundSnapshot {
+        String mode;
+        String batchId;
+        Timestamp startTime;
+        Timestamp endTime;
+        long durationMs;
+        long rawCnt;
+        long validCnt;
+        long outputRows;
+        long cleanDurationMs;
+        /** 本轮写完后 DWD 的行数 */
+        long dwdRows;
+        /** 本轮写完后异常留痕表的行数 */
+        long rejectRows;
+        /** 本轮写完后 ADS 趋势表的 GMV 合计 */
+        BigDecimal adsGmv;
+        /** 本轮写完后 ADS 趋势表的有效订单量合计 */
+        long adsValidOrderCnt;
+    }
+
+    private static long scalarLong(MysqlSink sink, String sql) {
+        List<Object[]> rows = query(sink, sql);
+        if (rows.isEmpty() || rows.get(0)[0] == null) {
+            return 0L;
+        }
+        return (long) Double.parseDouble(String.valueOf(rows.get(0)[0]));
+    }
+
+    private static BigDecimal scalarDecimal(MysqlSink sink, String sql) {
+        List<Object[]> rows = query(sink, sql);
+        if (rows.isEmpty() || rows.get(0)[0] == null) {
+            return BigDecimal.ZERO;
+        }
+        return new BigDecimal(String.valueOf(rows.get(0)[0]));
     }
 
     // ==================================================================

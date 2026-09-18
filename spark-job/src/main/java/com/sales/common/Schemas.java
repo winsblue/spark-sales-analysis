@@ -31,8 +31,16 @@ public final class Schemas {
     // 业务枚举
     // ==================================================================
 
-    /** 合法订单状态枚举 */
-    public static final String[] ORDER_STATUS_ALL = {"已完成", "已支付", "待付款", "已取消", "已退款"};
+    /**
+     * 合法订单状态枚举。
+     *
+     * <p>注意「无法履约」这个取值：Olist 真实数据集有 {@code unavailable} 状态
+     * （已批准但最终未能履约）。原始数据里**没有任何退款字段**，
+     * 因此不能断言它是「已退款」——这里给一个中性的、描述事实的状态名，
+     * 且它不计入有效订单。</p>
+     */
+    public static final String[] ORDER_STATUS_ALL = {
+            "已完成", "已支付", "待付款", "已取消", "已退款", "无法履约"};
 
     /** 计入 GMV 的有效订单状态 */
     public static final String[] ORDER_STATUS_VALID = {"已完成", "已支付"};

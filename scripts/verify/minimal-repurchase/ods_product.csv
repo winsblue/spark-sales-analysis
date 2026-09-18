@@ -1,0 +1,3 @@
+﻿product_id,product_name,category_id,category_name,brand,cost_price,launch_date
+P1,商品一,C01,类目一,品牌A,60.00,2025-01-01
+P2,商品二,C02,类目二,品牌B,30.00,2025-01-01

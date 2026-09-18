@@ -19,6 +19,7 @@
 param(
     [switch]$SourceOnly,
     [switch]$NoDump,
+    [switch]$AllowNoGit,
     [string]$OutDir = "dist"
 )
 
@@ -165,30 +166,56 @@ if (-not $usedTar) {
 }
 
 # ---------------------------------------------------------------------
-# 5. self check: make sure .git history really made it into the zip
+# 5. self check + exit code
+#    Delivery requirements: the package MUST carry the .git history and
+#    MUST NOT contain build artifacts / generated data. If either fails
+#    the script exits with code 1 so it can be used in an automated flow.
 # ---------------------------------------------------------------------
 $zipMB = [math]::Round((Get-Item $ZipPath).Length / 1MB, 2)
 $stageMB = [math]::Round(((Get-ChildItem $Stage -Recurse -File -Force | Measure-Object Length -Sum).Sum) / 1MB, 2)
 
-$hasGit = $false
-try {
-    # zip stores entry names uncompressed, so a byte-preserving text scan finds them.
-    # (ISO-8859-1 maps every byte 1:1 to a char, so nothing is lost or mangled.)
-    $raw = [System.IO.File]::ReadAllText($ZipPath, [System.Text.Encoding]::GetEncoding(28591))
-    $hasGit = $raw.Contains(".git/HEAD")
-} catch {
-    Write-Warning "could not inspect the zip automatically: $($_.Exception.Message)"
+# list entry NAMES only (no false positives from file contents)
+$entries = @()
+if (Test-Path $tarExe) {
+    $entries = & $tarExe -tf $ZipPath 2>$null
+} else {
+    try {
+        $raw = [System.IO.File]::ReadAllText($ZipPath, [System.Text.Encoding]::GetEncoding(28591))
+        $entries = $raw -split "[`r`n]+"
+    } catch {
+        Write-Warning "could not list the zip automatically: $($_.Exception.Message)"
+    }
 }
 
-if (-not $hasGit) {
-    Write-Warning "the zip does not seem to contain .git - the receiver will not get the commit history."
-    Write-Warning "check whether attrib.exe cleared the hidden attribute on the staged copy."
+$hasGit = [bool]($entries | Where-Object { $_ -match "\.git/HEAD$" })
+$forbiddenPatterns = @("node_modules/", "/data/raw/", "/data/real/", "/data/real-raw/", "/target/")
+$forbiddenFound = @()
+foreach ($pat in $forbiddenPatterns) {
+    if ($entries | Where-Object { $_ -like ("*" + $pat + "*") }) { $forbiddenFound += $pat }
 }
 
 Write-Host ""
 Write-Host "[package-dist] DONE"
 Write-Host "[package-dist]   folder : $Stage  ($stageMB MB)"
 Write-Host "[package-dist]   zip    : $ZipPath  ($zipMB MB)"
-Write-Host "[package-dist]   .git history included : $hasGit"
+Write-Host "[package-dist]   .git history included       : $hasGit"
+Write-Host ("[package-dist]   non-deliverable paths found : " +
+    $(if ($forbiddenFound.Count -gt 0) { $forbiddenFound -join ", " } else { "none" }))
 Write-Host "[package-dist]   hand this zip (or the folder) to the receiver."
 Write-Host ""
+
+if ($forbiddenFound.Count -gt 0) {
+    Write-Warning ("the zip contains non-deliverable paths: " + ($forbiddenFound -join ", "))
+}
+if (-not $hasGit) {
+    Write-Warning "the zip does NOT contain .git - the receiver will not get the commit history."
+    Write-Warning "delivery requires the history, so this run is treated as FAILED."
+    Write-Warning "hint: pass -AllowNoGit if you really want a package without history."
+}
+
+if ((-not $hasGit -and -not $AllowNoGit) -or $forbiddenFound.Count -gt 0) {
+    Write-Host "[package-dist] RESULT: FAILED - package is not deliverable as-is"
+    exit 1
+}
+Write-Host "[package-dist] RESULT: OK - package is deliverable"
+exit 0

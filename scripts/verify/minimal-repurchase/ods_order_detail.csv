@@ -1,0 +1,5 @@
+﻿order_id,order_time,user_id,product_id,channel,province,city,quantity,unit_price,discount_amount,pay_amount,order_status,pay_type
+A1,2026-01-01 10:00:00,U1,P1,APP商城,广东,深圳,1,100.00,0.00,100.00,已完成,支付宝
+A2,2026-01-01 11:00:00,U2,P1,APP商城,广东,深圳,2,100.00,0.00,200.00,已完成,支付宝
+B1,2026-01-02 10:00:00,U1,P1,APP商城,广东,深圳,1,100.00,0.00,100.00,已完成,支付宝
+B2,2026-01-02 12:00:00,U3,P2,APP商城,广东,深圳,1,50.00,0.00,50.00,已取消,支付宝

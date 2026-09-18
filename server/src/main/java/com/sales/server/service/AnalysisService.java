@@ -58,7 +58,14 @@ public class AnalysisService {
 
     public List<KpiCardVO> overview(AnalysisQuery query) {
         prepare(query);
-        if (!hasDimensionFilter(query)) {
+        // 只有「完全没有任何筛选」时，才可以直接返回全周期预计算快照：
+        // ads_overview 是全周期算好的定值，一旦请求带了日期范围，它的数值就不再对应请求区间。
+        //
+        // 早期实现只要没有维度筛选就走快照，导致「日期范围对总览指标完全不起作用」。
+        // 现在改为：只要带了日期范围或维度筛选，就回明细即席聚合，原因是：
+        //   ① 去重指标（下单用户数）不能用每日去重值累加 —— 同一用户跨天会重复计数；
+        //   ② 预计算快照没有区间概念，结构上无法响应 startDate/endDate。
+        if (!hasAnyFilter(query)) {
             List<AdsOverview> presets = analysisMapper.selectOverviewFromAds();
             if (presets != null && !presets.isEmpty()) {
                 List<KpiCardVO> cards = new ArrayList<>(presets.size());
@@ -79,6 +86,16 @@ public class AnalysisService {
         return overviewFromDwd(query);
     }
 
+    /**
+     * 按查询区间对 DWD 明细做即席聚合，得到全部 9 项总览指标。
+     *
+     * <p>区间由 SQL 的 WHERE 透传到明细层，因此：</p>
+     * <ul>
+     *   <li>可加指标（GMV / 销售件数 / 订单量）等于区间内各日之和；</li>
+     *   <li>去重指标（下单用户数）在<b>整个区间内去重一次</b>，
+     *       而不是把每日的去重值相加 —— 这正是不能简单累计每日值的原因。</li>
+     * </ul>
+     */
     private List<KpiCardVO> overviewFromDwd(AnalysisQuery query) {
         Map<String, Object> m = analysisMapper.selectOverviewFromDwd(query);
         BigDecimal gmv = decimal(m, "gmv");
@@ -274,6 +291,16 @@ public class AnalysisService {
                 || isNotBlank(q.getCategoryName())
                 || isNotBlank(q.getProvince())
                 || isNotBlank(q.getPayType());
+    }
+
+    /** 是否带日期范围筛选 */
+    private boolean hasDateFilter(AnalysisQuery q) {
+        return isNotBlank(q.getStartDate()) || isNotBlank(q.getEndDate());
+    }
+
+    /** 是否带任何筛选（日期范围或维度） */
+    private boolean hasAnyFilter(AnalysisQuery q) {
+        return hasDateFilter(q) || hasDimensionFilter(q);
     }
 
     /** 计算占比与排名，并按成交金额降序 */

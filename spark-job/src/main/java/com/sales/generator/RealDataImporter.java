@@ -19,12 +19,16 @@ import org.apache.spark.sql.types.StructType;
 import java.io.IOException;
 import java.util.Locale;
 
+import static org.apache.spark.sql.functions.abs;
 import static org.apache.spark.sql.functions.coalesce;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.count;
+import static org.apache.spark.sql.functions.countDistinct;
 import static org.apache.spark.sql.functions.first;
 import static org.apache.spark.sql.functions.lit;
 import static org.apache.spark.sql.functions.row_number;
+import static org.apache.spark.sql.functions.round;
+import static org.apache.spark.sql.functions.sum;
 import static org.apache.spark.sql.functions.trim;
 import static org.apache.spark.sql.functions.when;
 
@@ -170,9 +174,39 @@ public final class RealDataImporter {
             System.out.println("[RealImport] 类目编码表已生成：" + catIdRows.size() + " 个类目");
 
             // ---------- 4. 订单商品明细：同一订单内的同一商品合并计件 ----------
-            Dataset<Row> itemAgg = items.groupBy("order_id", "product_id").agg(
-                    count(col("order_item_id")).as("quantity"),
-                    first(col("price"), true).as("unit_price"));
+            // 金额口径：
+            //   pay_amount = 该组 price 的真实合计（而不是「单价 × 件数」）
+            //   unit_price = 加权平均单价 = 合计 ÷ 件数
+            // 这样 quantity × unit_price == pay_amount 恒成立，R06 不会因为口径而误伤。
+            //
+            // 实测（112,650 条商品行 → 102,425 组，其中 7,088 组为多行、quantity 2~15）：
+            //   多行分组内单价完全一致（price_variants>1 的分组数为 0），
+            //   因此与旧的「单价 × 件数」口径逐分一致（差异 0.00 BRL，相对误差 0.000000%）。
+            //   但若上游出现「同单同品不同价」，只有合计口径才算得对 —— 所以这里做了自检。
+            Dataset<Row> itemAgg = items
+                    .withColumn("price_dec", col("price").cast(DataTypes.createDecimalType(20, 4)))
+                    .groupBy("order_id", "product_id").agg(
+                            count(col("order_item_id")).as("quantity"),
+                            sum(col("price_dec")).as("total_price"),
+                            countDistinct(col("price")).as("price_variants"))
+                    .withColumn("pay_amount",
+                            round(col("total_price"), 2).cast(DataTypes.createDecimalType(14, 2)))
+                    .withColumn("unit_price",
+                            round(col("total_price").cast(DataTypes.DoubleType)
+                                    .divide(col("quantity").cast(DataTypes.DoubleType)), 2)
+                                    .cast(DataTypes.createDecimalType(12, 2)))
+                    .persist();
+
+            // 口径自检：这两项预期都是 0，不为 0 就说明金额口径需要复核
+            long multiPriceGroups = itemAgg.filter(col("price_variants").gt(1)).count();
+            long amountMismatch = itemAgg.filter(
+                    abs(col("unit_price").cast(DataTypes.DoubleType)
+                            .multiply(col("quantity").cast(DataTypes.DoubleType))
+                            .minus(col("pay_amount").cast(DataTypes.DoubleType))).gt(0.011)).count();
+            System.out.println("[RealImport] 口径自检 A：同单同品不同价的分组数 = " + multiPriceGroups
+                    + "（>0 时「单价×件数」口径会算错）");
+            System.out.println("[RealImport] 口径自检 B：|数量×单价 − 实付| > 0.01 的分组数 = " + amountMismatch
+                    + "（>0 时 R06 会命中，需复核舍入口径）");
 
             // ---------- 5. 拼成订单明细宽表 ----------
             Dataset<Row> wide = itemAgg
@@ -193,11 +227,8 @@ public final class RealDataImporter {
                     col("quantity"),
                     col("unit_price"),
                     lit("0.00").as("discount_amount"),
-                    // 实付金额 = 单价 × 数量（运费不计入，口径见 docs/02）
-                    org.apache.spark.sql.functions.round(
-                                    col("unit_price").cast(DataTypes.createDecimalType(20, 4))
-                                            .multiply(col("quantity").cast(DataTypes.createDecimalType(20, 4))), 2)
-                            .cast(DataTypes.createDecimalType(14, 2)).as("pay_amount"),
+                    // 实付金额 = 该组商品金额合计（运费 freight_value 不计入，口径见 docs/02）
+                    col("pay_amount"),
                     mapOrderStatus().as("order_status"),
                     mapPayType().as("pay_type"));
 
@@ -231,15 +262,31 @@ public final class RealDataImporter {
         }
     }
 
-    /** Olist 订单状态 → 本项目中文状态枚举 */
+    /**
+     * Olist 订单状态 → 本项目中文状态枚举。
+     *
+     * <p><b>映射依据（只有原始字段能证明的才映射）</b>：</p>
+     * <ul>
+     *   <li>{@code delivered} → 已完成：状态名 + 三个履约时间戳齐全；</li>
+     *   <li>{@code shipped / invoiced / processing / approved} → 已支付：
+     *       实测这些状态的 {@code order_approved_at} 覆盖率均为 <b>100%</b>，
+     *       而该字段本身就是「付款审批时间」，故「已支付」有据可依；</li>
+     *   <li>{@code created} → <b>待付款</b>：实测 {@code order_approved_at} 覆盖率
+     *       为 <b>0%</b>，付款尚未审批通过。早期版本把它并入「已支付」是错的；</li>
+     *   <li>{@code canceled} → 已取消：状态名直接表明；</li>
+     *   <li>{@code unavailable} → <b>无法履约</b>：已批准但最终未能履约。
+     *       原始数据中<b>没有退款字段，无法证明已退款</b>，
+     *       因此不再断言「已退款」（早期版本属于超出数据可证范围的推断）；</li>
+     *   <li>其余未知取值 → 留给清洗规则 R07 判定为非法状态。</li>
+     * </ul>
+     */
     private static Column mapOrderStatus() {
         return when(col("order_status").equalTo("delivered"), lit("已完成"))
-                // 已发货 / 已开票 / 处理中 / 已创建 / 已批准：都表示「已付款成功、尚未完成」
-                .when(col("order_status").isin(
-                        "shipped", "invoiced", "processing", "created", "approved"), lit("已支付"))
+                .when(col("order_status").isin("shipped", "invoiced", "processing", "approved"),
+                        lit("已支付"))
+                .when(col("order_status").equalTo("created"), lit("待付款"))
                 .when(col("order_status").equalTo("canceled"), lit("已取消"))
-                // 无法履约 → 实际业务中会退款
-                .when(col("order_status").equalTo("unavailable"), lit("已退款"))
+                .when(col("order_status").equalTo("unavailable"), lit("无法履约"))
                 // 兜底：交给清洗规则 R07 判定为非法状态
                 .otherwise(lit("其他"));
     }
