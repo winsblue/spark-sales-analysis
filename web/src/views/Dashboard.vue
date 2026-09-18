@@ -16,10 +16,7 @@
     <!-- 核心指标卡 -->
     <div class="grid grid-kpi" style="margin-bottom: 14px">
       <div v-for="kpi in overview" :key="kpi.code" class="panel kpi-card">
-        <div class="kpi-name">
-          {{ kpi.name }}
-          <span class="tag">{{ kpi.source === 'PRECOMPUTE' ? '预计算' : '即席聚合' }}</span>
-        </div>
+        <div class="kpi-name">{{ kpi.name }}</div>
         <div class="kpi-value">
           {{ formatKpi(kpi.code, kpi.value) }}
           <span class="unit">{{ kpi.unit }}</span>
@@ -28,8 +25,8 @@
       </div>
     </div>
 
-    <!-- 趋势 + 渠道分布 -->
-    <div class="grid grid-3" style="margin-bottom: 14px">
+    <!-- 销售趋势 -->
+    <div class="grid" style="margin-bottom: 14px">
       <div class="panel">
         <div class="panel-head">
           <h3>销售趋势</h3>
@@ -37,14 +34,6 @@
         </div>
         <div class="panel-body">
           <ChartBox :option="trendOption" height="330px" />
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-head">
-          <h3>渠道销售占比</h3>
-        </div>
-        <div class="panel-body">
-          <ChartBox :option="channelOption" height="330px" />
         </div>
       </div>
     </div>
@@ -255,7 +244,10 @@ async function loadAll() {
       api.regionTopN(q),
       api.channelCategory(q)
     ])
-    overview.value = kpi || []
+    // 展示层不呈现退款率与折扣率
+    overview.value = (kpi || []).filter(
+      (k) => k.code !== 'REFUND_RATE' && k.code !== 'DISCOUNT_RATE'
+    )
     trend.value = tr || []
     categories.value = cat || []
     products.value = prod || []
