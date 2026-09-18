@@ -146,25 +146,25 @@ public class AnalysisService {
     public List<MetricItemVO> categoryTopN(AnalysisQuery query) {
         prepare(query);
         List<MetricItemVO> list = analysisMapper.selectCategoryStat(query);
-        return fillRatioAndRank(list);
+        return withRatioAndRank(list, query);
     }
 
     public List<MetricItemVO> channelDist(AnalysisQuery query) {
         prepare(query);
         List<MetricItemVO> list = analysisMapper.selectChannelStat(query);
-        return fillRatioAndRank(list);
+        return withRatioAndRank(list, query);
     }
 
     public List<MetricItemVO> paytypeDist(AnalysisQuery query) {
         prepare(query);
         List<MetricItemVO> list = analysisMapper.selectPaytypeStat(query);
-        return fillRatioAndRank(list);
+        return withRatioAndRank(list, query);
     }
 
     public List<MetricItemVO> regionTopN(AnalysisQuery query) {
         prepare(query);
         List<MetricItemVO> list = analysisMapper.selectRegionStat(query);
-        return fillRatioAndRank(list);
+        return withRatioAndRank(list, query);
     }
 
     public List<ProductRankVO> productRank(AnalysisQuery query) {
@@ -303,12 +303,18 @@ public class AnalysisService {
         return hasDateFilter(q) || hasDimensionFilter(q);
     }
 
-    /** 计算占比与排名，并按成交金额降序 */
-    private List<MetricItemVO> fillRatioAndRank(List<MetricItemVO> list) {
+    /**
+     * 补齐「占比」与「排名」。
+     *
+     * <p><b>占比的分母取"当前筛选条件下的全部 GMV 合计"，而不是入参列表之和。</b>
+     * 各维度统计都带 LIMIT，返回的只是 TopN；若用返回列表之和作分母，
+     * TopN 的占比必然凑成 100%（例如类目 Top3 显示 36% + 34% + 30%），失去业务含义。
+     * 分母通过 selectTotalGmv 查询，与分子复用同一套筛选条件，保证同源。</p>
+     */
+    private List<MetricItemVO> withRatioAndRank(List<MetricItemVO> list, AnalysisQuery query) {
         if (list == null || list.isEmpty()) {
             return new ArrayList<>();
         }
-        BigDecimal total = BigDecimal.ZERO;
         for (MetricItemVO item : list) {
             if (item.getGmv() == null) {
                 item.setGmv(BigDecimal.ZERO);
@@ -323,7 +329,10 @@ public class AnalysisService {
             if (item.getBuyerCnt() == null) {
                 item.setBuyerCnt(0L);
             }
-            total = total.add(item.getGmv());
+        }
+        BigDecimal total = analysisMapper.selectTotalGmv(query);
+        if (total == null) {
+            total = BigDecimal.ZERO;
         }
         int rank = 1;
         for (MetricItemVO item : list) {

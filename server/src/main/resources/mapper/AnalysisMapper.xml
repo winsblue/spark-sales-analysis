@@ -220,6 +220,21 @@
         </if>
     </select>
 
+    <!--
+      当前筛选条件下的有效订单 GMV 合计，用作维度排行「占比」的分母。
+
+      为什么需要单独查一次：占比 = 该项 GMV ÷ 全部同类项 GMV 之和。
+      各维度统计都带 LIMIT，返回的只是 TopN，若用"返回列表之和"当分母，
+      TopN 的占比必然凑成 100%，失去意义（曾在演示中发现该问题）。
+      这里复用与各维度统计完全相同的 dwdDimWhere 片段，保证分子分母同源。
+    -->
+    <select id="selectTotalGmv" resultType="java.math.BigDecimal">
+        SELECT ROUND(SUM(pay_amount), 2)
+        FROM dwd_order_detail
+        WHERE 1 = 1
+        <include refid="dwdDimWhere"/>
+    </select>
+
     <select id="selectChannelCategory" resultType="com.sales.server.vo.ChannelCategoryVO">
         SELECT channel       AS channel,
                category_name AS categoryName,

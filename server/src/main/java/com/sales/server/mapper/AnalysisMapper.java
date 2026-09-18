@@ -68,6 +68,15 @@ public interface AnalysisMapper {
     /** 省份排行 */
     List<MetricItemVO> selectRegionStat(@Param("q") AnalysisQuery query);
 
+    /**
+     * 当前筛选条件下的有效订单 GMV 合计。
+     *
+     * <p>用作维度排行「占比」的<b>分母</b>：占比的含义是"该项占全部同类项的百分比"，
+     * 因此分母必须是全部维度之和，而不是被 LIMIT 截断后的返回列表之和。
+     * 必须与各维度统计使用相同的筛选片段（XML 中的 dwdDimWhere），否则分子分母不同源。</p>
+     */
+    BigDecimal selectTotalGmv(@Param("q") AnalysisQuery query);
+
     /** 渠道 × 类目 交叉对比 */
     List<ChannelCategoryVO> selectChannelCategory(@Param("q") AnalysisQuery query);
 

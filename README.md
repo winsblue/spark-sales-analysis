@@ -104,7 +104,8 @@ spark-sales-analysis/
 │   ├── 08-答辩PPT大纲.md
 │   ├── 09-Linux集群部署指南.md
 │   ├── 10-项目教学手册.md          （自学 / 答辩准备用，含原理、决策依据、面试问答）
-│   └── 11-项目交付与迁移指南.md     （复制到别的电脑 / 交给老师怎么操作）
+│   ├── 11-项目交付与迁移指南.md     （复制到别的电脑 / 交给老师怎么操作）
+│   └── 12-答辩演示操作手册.md       （答辩当天照着做：启动、演示脚本、话术、应急预案）
 ├── sql/
 │   └── 01_schema.sql              建库建表脚本（ODS / DWD / ADS + 监控表）
 ├── data/
@@ -142,7 +143,10 @@ spark-sales-analysis/
     ├── start-web-dev.cmd          启动前端开发服务器
     ├── build-all.cmd              全量构建（含前端打包）
     ├── package-dist.ps1           生成交付包（给别人用的 zip，见 docs/11）
+    ├── demo-start.ps1             答辩演示用：一键启动两个实例（真实数据 8080 + 模拟数据 8081）
+    ├── demo-stop.ps1              停止演示实例
     ├── templates/                 交付说明模板（打包时复制进包内）
+    ├── verify/                    可重复验证脚本（对账 / 最小回归样例）
     └── linux/                     Linux 集群相关脚本
         ├── setup-spark.sh         安装并配置 Spark
         ├── upload-to-hdfs.sh      上传数据到 HDFS

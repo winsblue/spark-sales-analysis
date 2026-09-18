@@ -62,3 +62,6 @@ application-local.properties
 # 真实数据集（Olist）原始文件与转换产物，均可由脚本重新下载/生成
 /data/real-raw/
 /data/real/
+
+# 演示脚本输出日志
+/logs/

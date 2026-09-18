@@ -62,7 +62,7 @@ Write-Host "[package-dist] copying source (excluding build artifacts) ..."
 $roboArgs = @(
     $Root, $SrcDst,
     "/E",
-    "/XD", "node_modules", "dist", "target", ".idea", ".vscode", "out", "build",
+    "/XD", "node_modules", "dist", "target", ".idea", ".vscode", "out", "build", "logs",
     (Join-Path $Root "data"),
     "/XF", "*.log", "*.tmp", "*.iml", ".DS_Store", "Thumbs.db",
     "/NFL", "/NDL", "/NJH", "/NJS", "/NP"

@@ -96,7 +96,7 @@
     <div class="panel" style="margin-bottom: 14px">
       <div class="panel-head">
         <h3>商品销售排行 Top {{ filters.limit }}</h3>
-        <span class="hint">点击行可查看该商品的订单明细</span>
+        <span class="hint">按成交金额降序</span>
       </div>
       <div class="panel-body table-scroll">
         <table class="data-table">
