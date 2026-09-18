@@ -52,3 +52,6 @@ ehthumbs.db
 # ---- 本地配置（含数据库口令，不入库）----
 application-local.yml
 application-local.properties
+
+# run-etl-cluster.sh 会把配置同步到工作目录供 Driver 读取
+/spark-job.properties

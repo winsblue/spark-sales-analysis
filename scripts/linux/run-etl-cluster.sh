@@ -41,6 +41,19 @@ if [ ! -f "${JAR}" ]; then
 fi
 [ -f "${JAR}" ] || fail "构建后仍未找到 ${JAR}"
 
+# ---------------------------------------------------------------------
+# 关键：把配置同步到"当前工作目录"
+# local[*] / client 模式下 Driver 就是 spark-submit 这个 JVM，
+# spark.driver.extraJavaOptions 不生效 → 无法用 -D 传外部配置。
+# 所以作业改为从工作目录读取 ./spark-job.properties（优先级高于 jar 内置默认值）。
+# ---------------------------------------------------------------------
+cd "${PROJECT_ROOT}"
+cp -f "${CONF}" "${PROJECT_ROOT}/spark-job.properties"
+log "已把配置同步到 ${PROJECT_ROOT}/spark-job.properties"
+log "  当前 data.raw.dir = $(grep -E '^data.raw.dir=' "${PROJECT_ROOT}/spark-job.properties" | cut -d= -f2-)"
+log "  当前 jdbc.url     = $(grep -E '^jdbc.url=' "${PROJECT_ROOT}/spark-job.properties" | cut -d= -f2-)"
+log "  如需修改：直接编辑该文件后重新执行本脚本即可"
+
 # 只有 yarn / standalone / spark:// 支持 --deploy-mode，local 模式传了会直接报错
 EXTRA_ARGS=()
 case "${MASTER}" in
@@ -62,14 +75,19 @@ log "  JAR         = ${JAR}"
 log "  CONF        = ${CONF}"
 log "  业务参数    = $*"
 
+# 说明：配置靠"工作目录下的 spark-job.properties"生效（见上面的 cp）。
+# 下面两行的 -Dconfig.file 只在"Driver 独立启动"的场景（YARN cluster 模式）有用，
+# 此时 Driver 拿到的路径必须是 --files 分发后的文件名。
+# local[*] / client 模式下这两行会被 Spark 忽略（不会报错），配置仍由工作目录那一份生效。
+
 "${SPARK_HOME}/bin/spark-submit" \
   --class com.sales.SalesAnalysisApplication \
   --master "${MASTER}" \
   "${EXTRA_ARGS[@]}" \
   --name spark-sales-analysis \
   --files "${CONF}" \
-  --conf spark.driver.extraJavaOptions="-Dconfig.file=spark-job.properties" \
-  --conf spark.executor.extraJavaOptions="-Dconfig.file=spark-job.properties" \
+  --conf spark.driver.extraJavaOptions="-Dconfig.file=${CONF}" \
+  --conf spark.executor.extraJavaOptions="-Dconfig.file=${CONF}" \
   --conf spark.sql.shuffle.partitions="${SHUFFLE_PARTITIONS}" \
   --conf spark.driver.memory=1g \
   --conf spark.executor.memory=2g \

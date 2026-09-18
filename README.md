@@ -31,7 +31,7 @@
 
 | 层次 | 技术选型 | 说明 |
 | --- | --- | --- |
-| 数据计算 | **Apache Spark 3.5.1**（local[*] 单机模式） | RDD 与 DataFrame/SparkSQL 双实现 |
+| 数据计算 | **Apache Spark 3.5.x**（开发验证 3.5.1 / 集群可用 3.5.9） | RDD 与 DataFrame/SparkSQL 双实现，支持 `local[*]` 与 YARN 提交 |
 | 结果存储 | **MySQL 5.5.27**（InnoDB / utf8） | ODS / DWD / ADS 三层结构 |
 | 后端服务 | **Spring Boot 2.7.18 + MyBatis-Plus 3.5.3 + OpenAPI 3** | JDK 8 环境（Spring Boot 2.7 是支持 JDK 8 的最后一个分支） |
 | 前端可视化 | **Vue 3 + Vite 5 + ECharts 5 + Axios** | 折线、柱状、饼图、分组对比与明细下钻 |
@@ -240,7 +240,7 @@ npm run dev      # http://127.0.0.1:5173，已配置 /api 代理到 8080
 
 ```bash
 # 1) 安装并配置 Spark（集群已有 Hadoop 时执行）
-sudo ./scripts/linux/setup-spark.sh && source /etc/profile
+./scripts/linux/setup-spark.sh && source /etc/profile
 
 # 2) 生成数据并上传到 HDFS
 scripts/linux/upload-to-hdfs.sh

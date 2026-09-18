@@ -13,10 +13,16 @@ import java.util.Properties;
  *
  * <p>加载优先级（由低到高）：</p>
  * <ol>
- *   <li>classpath 下的 spark-job.properties（默认值）</li>
+ *   <li>classpath 下的 spark-job.properties（打包在 jar 里的默认值）</li>
+ *   <li><b>工作目录下的 ./spark-job.properties</b>（便于"改配置不改 jar"，集群提交时用）</li>
  *   <li>外部配置文件，通过 JVM 参数 -Dconfig.file=xxx.properties 指定</li>
  *   <li>JVM 系统属性 -Dkey=value</li>
  * </ol>
+ *
+ * <p><b>为什么需要第 2 条？</b>
+ * 在 {@code --master local[*]}（或 client 模式）下，Driver 就是 spark-submit 启动的那个 JVM，
+ * 此时 {@code spark.driver.extraJavaOptions} 不会生效，因此无法通过 -D 指定外部配置。
+ * 改为从"当前工作目录"读取同名文件，就能在集群上只改配置、不动 jar。</p>
  */
 public class JobConfig {
 
@@ -30,8 +36,34 @@ public class JobConfig {
     public static JobConfig load() {
         JobConfig cfg = new JobConfig();
         cfg.loadFromClasspath();
+        cfg.loadFromWorkingDir();
         cfg.loadFromExternalFile(System.getProperty("config.file"));
+        cfg.printEffective();
         return cfg;
+    }
+
+    /** 从当前工作目录加载（覆盖 jar 内置默认值），使集群上改配置无需重新打包 */
+    private void loadFromWorkingDir() {
+        String cwd = System.getProperty("user.dir");
+        File f = new File(cwd, DEFAULT_RESOURCE);
+        if (f.isFile()) {
+            try (InputStream in = new FileInputStream(f)) {
+                props.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+                System.out.println("[JobConfig] 已加载工作目录配置：" + f.getAbsolutePath());
+            } catch (IOException e) {
+                throw new IllegalStateException("读取工作目录配置文件失败: " + f.getAbsolutePath(), e);
+            }
+        }
+    }
+
+    /** 打印生效的关键配置，便于集群上排查"配置没生效"这类问题（不打印口令） */
+    private void printEffective() {
+        System.out.println("[JobConfig] 生效配置 -> spark.master=" + sparkMaster()
+                + " | data.raw.dir=" + rawDataDir()
+                + " | mock.output.dir=" + mockOutputDir()
+                + " | jdbc.url=" + get("jdbc.url", "")
+                + " | jdbc.user=" + get("jdbc.user", "")
+                + " | jdbc.password=" + (get("jdbc.password") == null ? "<未设置>" : "<已设置>"));
     }
 
     private void loadFromClasspath() {

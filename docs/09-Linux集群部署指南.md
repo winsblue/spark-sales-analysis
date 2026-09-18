@@ -80,7 +80,7 @@ jdbc.password=123456
 | **① 推荐** | Spark 装进虚拟机，用 `--master local[*]`；数据源走 **HDFS**，结果写宿主机 MySQL | 用上了 HDFS（体现大数据环境）；完全不碰 YARN 协议兼容性；4 vCPU/8GB 单节点跑 `local[*]` 性能最好 | 计算非分布式（但满足"基础—提高"要求） |
 | ② 折中 | 同 ①，`data.raw.dir` 留本地路径 | 链路最短，最快跑通 | 没体现 HDFS |
 | ③ 保守上 YARN | 降级到 Spark 3.1.x / 3.2.x（自带 hadoop-client 更接近 3.1.3） | 能真正跑分布式 | 需自行验证；单节点 YARN 资源紧张 |
-| ④ 直接用 3.5.1 上 YARN | 不做版本调整 | 版本最新 | **可能 AM/Container 协议不兼容**，需调参 |
+| ④ 直接用现役 3.5.9 上 YARN | 不做版本调整 | 版本最新 | **可能 AM/Container 协议不兼容**，需调参 |
 
 > 本项目在 Windows 上验证的就是 `local[*]` 路径（20 万行 36.6 秒完成），
 > 所以**方案 ① 是把已验证代码原样搬到 Linux 的最短路径**，答辩演示最稳。
@@ -102,7 +102,7 @@ hdfs getconf -confKey fs.defaultFS  # 记下这个值，下一步要用
 # ---------- ② 安装 Spark ----------
 cd spark-sales-analysis
 chmod +x scripts/linux/*.sh
-sudo ./scripts/linux/setup-spark.sh
+./scripts/linux/setup-spark.sh
 source /etc/profile
 spark-submit --version
 
@@ -189,7 +189,7 @@ cd spark-sales-analysis
 chmod +x scripts/linux/*.sh
 
 # 安装 Spark（默认装到 /opt/module/spark，可通过环境变量覆盖）
-sudo ./scripts/linux/setup-spark.sh
+./scripts/linux/setup-spark.sh
 
 # 让环境变量生效
 source /etc/profile
@@ -198,26 +198,46 @@ spark-submit --version
 
 脚本会自动完成：
 
-1. 检查 `java` / `hadoop` 环境，自动推断 `JAVA_HOME` 与 `HADOOP_CONF_DIR`；
-2. 依次尝试清华、阿里云、Apache 归档三个下载源获取 `spark-3.5.1-bin-hadoop3.tgz`；
-3. 解压到 `/opt/module/spark`（已存在则先备份）；
+1. 检查 `java` / `hadoop` 环境，**多级兜底**自动推断 `JAVA_HOME` / `HADOOP_HOME` / `HADOOP_CONF_DIR`
+   （环境变量 → `command -v java|hadoop` 反推 → 常见安装目录），因此 `sudo` 下环境变量丢失也能工作；
+2. 依次尝试清华、阿里云、华为云、Apache 归档四个下载源获取 `spark-3.5.9-bin-hadoop3.tgz`（约 383 MB），
+   下载后用 `gzip -t` 校验完整性（防止下到 HTML 错误页或半截文件）；
+3. 解压到 `$SPARK_HOME`（已存在则先备份为 `.bak.<时间戳>`）；
 4. 生成 `conf/spark-env.sh`，写入 `JAVA_HOME` / `HADOOP_CONF_DIR`；
-5. 写入 `/etc/profile.d/spark.sh` 配置 `PATH`；
-6. 用 `spark-submit --version` 自检。
+5. 配置 `PATH`：`/etc/profile.d/spark.sh` 可写就写系统级，否则追加到 `~/.bashrc`；
+6. 用 `spark-submit --version` 自检，并读出 `core-site.xml` 里的 `fs.defaultFS` 供你核对。
+
+> **关于 sudo（两个坑，已规避但要理解）**
+> - `sudo` 默认会重置环境变量，导致脚本读不到 `JAVA_HOME` / `HADOOP_CONF_DIR` → 早期版本会装出一个连不上 HDFS 的 Spark。
+>   脚本已改为多级兜底，但仍建议：**能用 `sudo -E` 就用 `-E` 保留环境变量**。
+> - 不需要 sudo 也能装：脚本检测到 `/opt` 不可写时会自动装到 `~/module/spark`，
+>   并把 `PATH` 追加到 `~/.bashrc`。这对课程作业完全够用。
 
 ### 版本选择建议
 
 | 集群 Hadoop 版本 | 建议 Spark 版本 | 说明 |
 | --- | --- | --- |
-| Hadoop 3.x | Spark 3.5.x（bin-hadoop3） | 本项目验证版本，推荐 |
+| Hadoop 3.x | **Spark 3.5.9（bin-hadoop3）** | 当前 Apache 镜像上的现役版本，推荐 |
 | Hadoop 2.7 ~ 2.10 | Spark 3.0~3.3（bin-hadoop2.7） | 用 `SPARK_VERSION=3.3.4` 覆盖脚本变量 |
-| Hive 3.x 已部署 | Spark 3.5.x | 如需读写 Hive 表，把 `hive-site.xml` 放到 `$SPARK_HOME/conf` |
 
-> 覆盖版本示例：
+> **重要：Apache 镜像只保留各分支的最新版**，旧版本会从 `mirrors.tuna` / `mirrors.aliyun` 下架
+> （实测 `spark-3.5.1`、`3.5.3`、`3.5.6`、`3.5.7` 在镜像上均已 404，只剩 `3.5.8` / `3.5.9`）。
+> 需要固定旧版本时，用 Apache 官方归档源：
 > ```bash
-> SPARK_VERSION=3.3.4 ./scripts/linux/setup-spark.sh
+> # 归档源保留所有历史版本，但国内访问较慢
+> SPARK_VERSION=3.5.1 ./scripts/linux/setup-spark.sh
+> # 脚本会依次尝试镜像，最后回落到 archive.apache.org
 > ```
-> 注意：脚本按 `spark-<版本>-bin-hadoop3` 命名下载，Hadoop 2.x 环境请手动下载 `bin-hadoop2.7` 包。
+>
+> **另一个容易踩的坑：Scala 版本必须匹配。**
+> Spark 的二进制包有两个名字：
+> - `spark-3.5.9-bin-hadoop3.tgz` → **Scala 2.12**（本项目用这个，pom 里是 `spark-sql_2.12`）
+> - `spark-3.5.9-bin-hadoop3-scala2.13.tgz` → Scala 2.13（**下了会报 `NoSuchMethodError`**）
+>
+> 脚本已经固定下载 Scala 2.12 那个包，手动下载时请注意。
+>
+> **同理，本项目在 Windows 上用 3.5.1 验证通过，集群上用 3.5.8/3.5.9 也可以** ——
+> 同一 3.5.x 分支内 API 与二进制兼容（`spark-sql_2.12` 的接口没有变化）。
 
 ### 如果虚拟机上没装 Maven
 
@@ -242,8 +262,15 @@ mvn -B -pl spark-job -am -Pcluster-package clean package -DskipTests
 # 产物：spark-job/target/spark-job-1.0.0-cluster.jar
 ```
 
-`cluster-package` 这个 profile 只打包**本项目代码 + MySQL 驱动**，
-Spark / Scala / Hadoop 由集群提供，jar 体积小（约 200KB）。
+`cluster-package` 这个 profile 用**白名单**只打包「本项目代码 + MySQL 驱动」，
+Spark / Scala / Hadoop / parquet / arrow 等全部由集群提供，jar 只有 **约 1 MB**。
+
+> **踩坑记录：为什么用白名单而不是黑名单？**
+> 因为 `spark-sql` 是 compile 作用域，它的传递依赖里除了 `org.apache.spark:*` 还有
+> parquet / orc / arrow / netty / avro / zookeeper 等几十个包。早期版本用"排除 Apache Spark"
+> 的黑名单写法，实测漏进来 **112 MB** 内容 —— 这些包 Spark 自带的 jars 里都有，
+> 打进提交包会造成版本冲突（典型的症状是运行时报 `NoSuchMethodError`）。
+> 改成白名单后 jar 从 112 MB 降到 1 MB，彻底消除该风险。
 
 ### 方式 B：在 Windows 上构建后上传
 
@@ -403,7 +430,7 @@ mysql -h <mysql-host> -uroot -p sales_analysis -e "
 ### 集群模式典型输出
 
 ```
-[Main] Spark 版本：3.5.1，运行模式：由 spark-submit 指定
+[Main] Spark 版本：3.5.9，运行模式：由 spark-submit 指定
 [Main] 数据源：hdfs://192.168.10.128:8020/sales/raw/ods_order_detail.csv
 [OdsLoader] ods_order_detail 装载 200177 行
 ---------------- 数据清洗统计 ----------------

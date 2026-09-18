@@ -101,14 +101,17 @@
                   <shadedClassifierName>cluster</shadedClassifierName>
                   <createDependencyReducedPom>false</createDependencyReducedPom>
                   <artifactSet>
-                    <excludes>
-                      <exclude>org.apache.spark:*</exclude>
-                      <exclude>org.scala-lang:*</exclude>
-                      <exclude>org.apache.hadoop:*</exclude>
-                      <exclude>org.apache.logging.log4j:*</exclude>
-                      <exclude>org.slf4j:*</exclude>
-                      <exclude>com.fasterxml.jackson.*:*</exclude>
-                    </excludes>
+                    <!--
+                      用白名单而不是黑名单：只装"本项目代码 + MySQL 驱动"。
+                      原因：spark-sql 是 compile 作用域，它的传递依赖里还有
+                      parquet / orc / arrow / netty / avro 等一大堆包（黑名单很难列全，
+                      实测漏进来约 112MB）。这些包 Spark 自带的 jars 里都有，
+                      打进提交包只会造成版本冲突，交给集群提供即可。
+                    -->
+                    <includes>
+                      <include>com.sales:spark-job</include>
+                      <include>mysql:mysql-connector-java</include>
+                    </includes>
                   </artifactSet>
                   <filters>
                     <filter>
