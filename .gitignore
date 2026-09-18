@@ -58,3 +58,7 @@ application-local.properties
 
 # 交付包输出目录（package-dist.ps1 生成）
 /dist/
+
+# 真实数据集（Olist）原始文件与转换产物，均可由脚本重新下载/生成
+/data/real-raw/
+/data/real/

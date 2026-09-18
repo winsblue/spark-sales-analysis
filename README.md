@@ -189,17 +189,31 @@ Spark 在 Windows 上需要 Hadoop 的 `winutils.exe` 与 `hadoop.dll`，否则�
 
 默认使用 `127.0.0.1:3306`、`root / 123456`、库名 `sales_analysis`，请按实际环境修改。
 
-### 步骤 3 · 生成模拟数据（约 20 万行订单明细）
+### 步骤 3 · 准备数据（两条路，任选其一）
+
+**路线 A（推荐，真实数据）**：Olist 巴西电商公开数据集，10 万笔真实订单
+
+```bash
+scripts\download-real-data.ps1   # 下载原始数据（约 48 MB，走 CDN 无需代理）
+scripts\run-etl.cmd --import-real  # 转换为本项目 ODS 标准格式
+```
+
+产物：`data/real/ods_order_detail.csv`（**102,425 行**）+ `data/real/ods_product.csv`（32,951 条）
+
+> 转换后的数据与模拟数据**格式完全同构**，因此后续清洗 / 统计 / 落库代码零改动。
+> 字段映射关系见 `docs/02-数据来源与数据字典.md` 第 1.2 节。
+
+**路线 B（对照，模拟数据）**：20 万行，主动注入 8 类脏数据，用于验证清洗规则
 
 ```bash
 scripts\run-etl.cmd --generate
 ```
 
-产物：
+产物：`data/raw/ods_order_detail.csv`（约 20 万行，含脏数据）+ `data/raw/ods_product.csv`（199 条）
 
-- `data/raw/ods_order_detail.csv`（约 20 万行，含刻意注入的脏数据）
-- `data/raw/ods_product.csv`（199 条商品维度）
-- `data/sample/*.csv`（随仓库提交的样例数据）
+> 两条路线通过 `spark-job.properties` 的 `data.raw.dir` 切换（`data/real` 或 `data/raw`），
+> **不需要改任何代码**。注意两条路线的**货币单位不同**（真实数据是 BRL，模拟数据是元），
+> 需同步修改 `data.currency.unit` 与后端 `application.yml` 的 `app.currency.unit`。
 
 ### 步骤 4 · 执行离线计算作业
 

@@ -6,6 +6,16 @@ server:
       enabled: true
       force: true
 
+# ---------------------------------------------------------------------
+# 应用自定义配置
+# ---------------------------------------------------------------------
+app:
+  # 金额单位：必须与离线作业 spark-job.properties 的 data.currency.unit 一致
+  #   模拟数据源（人民币）→ 元
+  #   Olist 真实数据集（巴西雷亚尔）→ BRL
+  currency:
+    unit: BRL
+
 spring:
   application:
     name: sales-analysis-server

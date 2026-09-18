@@ -423,13 +423,13 @@ public class RddAnalysis {
                 .divide(g.grossAmount, 4, RoundingMode.HALF_UP);
 
         List<Row> rows = new ArrayList<>();
-        rows.add(kpi("GMV", "成交金额", gmv, "元", "有效订单（已完成/已支付）的实付金额之和", statDate, batchId, now));
+        rows.add(kpi("GMV", "成交金额", gmv, Schemas.CURRENCY_UNIT, "有效订单（已完成/已支付）的实付金额之和", statDate, batchId, now));
         rows.add(kpi("ORDER_CNT", "下单量", BigDecimal.valueOf(g.orderCnt()), "单", "去重后的订单编号数量，含取消与退款订单", statDate, batchId, now));
         rows.add(kpi("VALID_ORDER_CNT", "有效订单量", BigDecimal.valueOf(g.validOrderIds.size()), "单", "订单状态为已完成或已支付的订单数量", statDate, batchId, now));
         rows.add(kpi("SALES_QTY", "销售件数", BigDecimal.valueOf(g.salesQty), "件", "有效订单中的商品购买数量之和", statDate, batchId, now));
         rows.add(kpi("BUYER_CNT", "下单用户数", BigDecimal.valueOf(g.userIds.size()), "人", "产生有效订单的去重用户数量", statDate, batchId, now));
-        rows.add(kpi("AVG_ORDER_AMOUNT", "客单价", g.avgOrderAmount(), "元", "GMV ÷ 有效订单量", statDate, batchId, now));
-        rows.add(kpi("AVG_ITEM_PRICE", "件单价", avgItemPrice, "元", "GMV ÷ 销售件数", statDate, batchId, now));
+        rows.add(kpi("AVG_ORDER_AMOUNT", "客单价", g.avgOrderAmount(), Schemas.CURRENCY_UNIT, "GMV ÷ 有效订单量", statDate, batchId, now));
+        rows.add(kpi("AVG_ITEM_PRICE", "件单价", avgItemPrice, Schemas.CURRENCY_UNIT, "GMV ÷ 销售件数", statDate, batchId, now));
         rows.add(kpi("REFUND_RATE", "退款率",
                 BigDecimal.valueOf(g.refundOrderIds.size()).multiply(BigDecimal.valueOf(100))
                         .divide(BigDecimal.valueOf(Math.max(g.orderCnt(), 1)), 4, RoundingMode.HALF_UP),

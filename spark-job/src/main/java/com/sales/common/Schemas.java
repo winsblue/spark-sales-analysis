@@ -52,6 +52,15 @@ public final class Schemas {
     public static final String UNKNOWN_CATEGORY_ID = "UNKNOWN";
     public static final String UNKNOWN_PRODUCT = "未知商品";
 
+    /**
+     * 金额单位。
+     *
+     * <p>由 {@code JobConfig} 在启动时按配置项 {@code data.currency.unit} 注入
+     * （默认"元"）。不同数据源的币种不同：模拟数据是人民币（元），
+     * Olist 真实数据集是巴西雷亚尔（BRL），因此不能写死。</p>
+     */
+    public static String CURRENCY_UNIT = "元";
+
     // ==================================================================
     // 源数据结构（ODS 读取用，全部按字符串读入以保留脏数据）
     // ==================================================================

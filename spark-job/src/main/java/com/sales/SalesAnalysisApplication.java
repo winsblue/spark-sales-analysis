@@ -6,6 +6,7 @@ import com.sales.clean.DataFrameCleaner;
 import com.sales.common.Schemas;
 import com.sales.config.JobConfig;
 import com.sales.generator.MockDataGenerator;
+import com.sales.generator.RealDataImporter;
 import com.sales.sink.MysqlSink;
 import com.sales.sink.OdsLoader;
 import com.sales.sink.SchemaInitializer;
@@ -44,6 +45,7 @@ import java.util.Map;
  * <pre>
  *   --mode=df|rdd|both   计算方式，默认 both（两种都跑，用于性能对比）
  *   --generate           仅生成模拟数据后退出
+ *   --import-real        把 Olist 真实数据集转换为本项目 ODS 标准格式后退出
  *   --no-ods             跳过 ODS 原始层装载
  *   --no-init-db         跳过建库建表
  *   --sql=path           指定建表脚本路径，默认 sql/01_schema.sql
@@ -77,6 +79,13 @@ public class SalesAnalysisApplication {
 
         JobConfig config = JobConfig.load();
         config.prepareHadoopHome();
+
+        // ---------- 0. 真实数据集导入（纯文件转换，不依赖数据库，因此放在最前） ----------
+        if (opts.containsKey("import-real")) {
+            RealDataImporter.importToOds(config);
+            System.out.println("[Main] 真实数据已转换为 ODS 标准格式，作业退出");
+            return;
+        }
 
         // ---------- 1. 数据库准备 ----------
         MysqlSink.ensureDatabase(config.jdbcUrl(), config.jdbcUser(), config.jdbcPassword());

@@ -38,6 +38,8 @@ public class JobConfig {
         cfg.loadFromClasspath();
         cfg.loadFromWorkingDir();
         cfg.loadFromExternalFile(System.getProperty("config.file"));
+        // 金额单位随数据源变化（模拟数据=元，Olist 真实数据=BRL），注入到表结构常量里
+        com.sales.common.Schemas.CURRENCY_UNIT = cfg.get("data.currency.unit", "元");
         cfg.printEffective();
         return cfg;
     }

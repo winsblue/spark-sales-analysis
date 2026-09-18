@@ -107,7 +107,7 @@
               <th>商品名称</th>
               <th>类目</th>
               <th>品牌</th>
-              <th class="num">成交金额（元）</th>
+              <th class="num">成交金额（BRL）</th>
               <th class="num">销售件数</th>
               <th class="num">订单量</th>
             </tr>
@@ -151,7 +151,7 @@
               <th>渠道</th>
               <th>省份</th>
               <th class="num">数量</th>
-              <th class="num">实付金额（元）</th>
+              <th class="num">实付金额（BRL）</th>
               <th>订单状态</th>
               <th>支付方式</th>
             </tr>
@@ -330,7 +330,7 @@ const trendOption = computed(() => {
     legend: legend(),
     xAxis: categoryAxis(trend.value.map((d) => d.statDate)),
     yAxis: [
-      valueAxis({ name: 'GMV（元）', nameTextStyle: { color: '#8b96a8', fontSize: 11 }, axisLabel: { formatter: (v) => money(v) } }),
+      valueAxis({ name: 'GMV（BRL）', nameTextStyle: { color: '#8b96a8', fontSize: 11 }, axisLabel: { formatter: (v) => money(v) } }),
       valueAxis({ name: '单量 / 人数', nameTextStyle: { color: '#8b96a8', fontSize: 11 }, splitLine: { show: false } })
     ],
     series: [
@@ -373,7 +373,7 @@ const channelOption = computed(() => {
     color: PALETTE,
     tooltip: tooltip({
       trigger: 'item',
-      formatter: (p) => `${p.name}<br/>成交金额：${money(p.value)} 元<br/>占比：${p.percent}%`
+      formatter: (p) => `${p.name}<br/>成交金额：${money(p.value)} BRL<br/>占比：${p.percent}%`
     }),
     legend: legend({ orient: 'horizontal', top: 'auto', bottom: 0, left: 'center' }),
     series: [
@@ -401,7 +401,7 @@ const categoryOption = computed(() => {
     tooltip: tooltip({
       formatter: (p) => {
         const d = p[0]
-        return `${d.name}<br/>成交金额：${money(d.value)} 元<br/>占比：${rows[d.dataIndex].ratio}%`
+        return `${d.name}<br/>成交金额：${money(d.value)} BRL<br/>占比：${rows[d.dataIndex].ratio}%`
       }
     }),
     xAxis: valueAxis({ axisLabel: { formatter: (v) => money(v) } }),
@@ -426,7 +426,7 @@ const paytypeOption = computed(() => {
     color: PALETTE.slice(1),
     tooltip: tooltip({
       trigger: 'item',
-      formatter: (p) => `${p.name}<br/>成交金额：${money(p.value)} 元<br/>占比：${p.percent}%`
+      formatter: (p) => `${p.name}<br/>成交金额：${money(p.value)} BRL<br/>占比：${p.percent}%`
     }),
     legend: legend({ orient: 'horizontal', bottom: 0, top: 'auto', left: 'center' }),
     series: [
@@ -452,7 +452,7 @@ const regionOption = computed(() => {
     tooltip: tooltip({
       formatter: (p) => {
         const d = p[0]
-        return `${d.name}<br/>成交金额：${money(d.value)} 元<br/>占比：${rows[d.dataIndex].ratio}%`
+        return `${d.name}<br/>成交金额：${money(d.value)} BRL<br/>占比：${rows[d.dataIndex].ratio}%`
       }
     }),
     xAxis: categoryAxis(rows.map((r) => r.name), { axisLabel: { color: '#8b96a8', fontSize: 10.5, interval: 0, rotate: 40 } }),
@@ -503,7 +503,7 @@ const channelCategoryOption = computed(() => {
       const title = ps[0].axisValue
       const lines = ps
         .filter((p) => Number(p.value) > 0)
-        .map((p) => `${p.marker}${p.seriesName}：${money(p.value)} 元`)
+        .map((p) => `${p.marker}${p.seriesName}：${money(p.value)} BRL`)
       return [title, ...lines].join('<br/>')
     } }),
     legend: legend({ top: 8 }),

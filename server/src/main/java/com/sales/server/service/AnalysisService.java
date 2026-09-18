@@ -11,6 +11,7 @@ import com.sales.server.vo.MetricItemVO;
 import com.sales.server.vo.ProductRankVO;
 import com.sales.server.vo.TrendPointVO;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -38,6 +39,15 @@ public class AnalysisService {
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
     private static final int AMOUNT_SCALE = 2;
     private static final int RATIO_SCALE = 2;
+
+    /**
+     * 金额单位，来自配置 {@code app.currency.unit}。
+     *
+     * <p>必须与离线作业的 {@code data.currency.unit} 保持一致：
+     * 模拟数据是人民币（元），Olist 真实数据集是巴西雷亚尔（BRL）。</p>
+     */
+    @Value("${app.currency.unit:元}")
+    private String currencyUnit;
 
     @Resource
     private AnalysisMapper analysisMapper;
@@ -81,13 +91,13 @@ public class AnalysisService {
         long refundOrderCnt = longValue(m, "refundOrderCnt");
 
         List<KpiCardVO> cards = new ArrayList<>();
-        cards.add(card("GMV", "成交金额", gmv, "元", "有效订单（已完成/已支付）的实付金额之和"));
+        cards.add(card("GMV", "成交金额", gmv, currencyUnit, "有效订单（已完成/已支付）的实付金额之和"));
         cards.add(card("ORDER_CNT", "下单量", BigDecimal.valueOf(orderCnt), "单", "去重后的订单编号数量，含取消与退款订单"));
         cards.add(card("VALID_ORDER_CNT", "有效订单量", BigDecimal.valueOf(validOrderCnt), "单", "订单状态为已完成或已支付的订单数量"));
         cards.add(card("SALES_QTY", "销售件数", BigDecimal.valueOf(salesQty), "件", "有效订单中的商品购买数量之和"));
         cards.add(card("BUYER_CNT", "下单用户数", BigDecimal.valueOf(buyerCnt), "人", "产生有效订单的去重用户数量"));
-        cards.add(card("AVG_ORDER_AMOUNT", "客单价", divide(gmv, BigDecimal.valueOf(validOrderCnt)), "元", "GMV ÷ 有效订单量"));
-        cards.add(card("AVG_ITEM_PRICE", "件单价", divide(gmv, BigDecimal.valueOf(salesQty)), "元", "GMV ÷ 销售件数"));
+        cards.add(card("AVG_ORDER_AMOUNT", "客单价", divide(gmv, BigDecimal.valueOf(validOrderCnt)), currencyUnit, "GMV ÷ 有效订单量"));
+        cards.add(card("AVG_ITEM_PRICE", "件单价", divide(gmv, BigDecimal.valueOf(salesQty)), currencyUnit, "GMV ÷ 销售件数"));
         cards.add(card("REFUND_RATE", "退款率",
                 divide(BigDecimal.valueOf(refundOrderCnt).multiply(HUNDRED), BigDecimal.valueOf(orderCnt)),
                 "%", "退款订单量 ÷ 下单量"));
@@ -198,13 +208,13 @@ public class AnalysisService {
         Map<String, Object> ads = analysisMapper.sumTrendFromAds();
         Map<String, Object> dwd = analysisMapper.sumFromDwd();
 
-        items.add(check("GMV 合计", decimal(ads, "gmv"), decimal(dwd, "gmv"), "元", true));
+        items.add(check("GMV 合计", decimal(ads, "gmv"), decimal(dwd, "gmv"), currencyUnit, true));
         items.add(check("销售件数合计",
                 decimal(ads, "salesQty"), decimal(dwd, "salesQty"), "件", false));
         items.add(check("有效订单量合计",
                 decimal(ads, "validOrderCnt"), decimal(dwd, "validOrderCnt"), "单", false));
         items.add(check("类目 GMV 合计",
-                analysisMapper.sumCategoryGmvFromAds(), analysisMapper.sumCategoryGmvFromDwd(), "元", true));
+                analysisMapper.sumCategoryGmvFromAds(), analysisMapper.sumCategoryGmvFromDwd(), currencyUnit, true));
 
         for (ConsistencyItemVO item : items) {
             log.info("一致性校验 [{}] 预计算={} 明细汇总={} 结果={}",

@@ -188,15 +188,15 @@ public class DataFrameAnalysis {
         Timestamp now = new Timestamp(System.currentTimeMillis());
 
         List<Row> kpis = new ArrayList<>();
-        kpis.add(kpi("GMV", "成交金额", gmv, "元", "有效订单（已完成/已支付）的实付金额之和", statDate, batchId, now));
+        kpis.add(kpi("GMV", "成交金额", gmv, Schemas.CURRENCY_UNIT, "有效订单（已完成/已支付）的实付金额之和", statDate, batchId, now));
         kpis.add(kpi("ORDER_CNT", "下单量", BigDecimal.valueOf(orderCnt), "单", "去重后的订单编号数量，含取消与退款订单", statDate, batchId, now));
         kpis.add(kpi("VALID_ORDER_CNT", "有效订单量", BigDecimal.valueOf(validOrderCnt), "单", "订单状态为已完成或已支付的订单数量", statDate, batchId, now));
         kpis.add(kpi("SALES_QTY", "销售件数", BigDecimal.valueOf(salesQty), "件", "有效订单中的商品购买数量之和", statDate, batchId, now));
         kpis.add(kpi("BUYER_CNT", "下单用户数", BigDecimal.valueOf(buyerCnt), "人", "产生有效订单的去重用户数量", statDate, batchId, now));
         kpis.add(kpi("AVG_ORDER_AMOUNT", "客单价",
-                divide(gmv, BigDecimal.valueOf(Math.max(validOrderCnt, 1)), 2), "元", "GMV ÷ 有效订单量", statDate, batchId, now));
+                divide(gmv, BigDecimal.valueOf(Math.max(validOrderCnt, 1)), 2), Schemas.CURRENCY_UNIT, "GMV ÷ 有效订单量", statDate, batchId, now));
         kpis.add(kpi("AVG_ITEM_PRICE", "件单价",
-                divide(gmv, BigDecimal.valueOf(Math.max(salesQty, 1)), 2), "元", "GMV ÷ 销售件数", statDate, batchId, now));
+                divide(gmv, BigDecimal.valueOf(Math.max(salesQty, 1)), 2), Schemas.CURRENCY_UNIT, "GMV ÷ 销售件数", statDate, batchId, now));
         kpis.add(kpi("REFUND_RATE", "退款率",
                 divide(BigDecimal.valueOf(refundOrderCnt).multiply(BigDecimal.valueOf(100)),
                         BigDecimal.valueOf(Math.max(orderCnt, 1)), 4), "%", "退款订单量 ÷ 下单量", statDate, batchId, now));
