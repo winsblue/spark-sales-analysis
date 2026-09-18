@@ -55,3 +55,6 @@ application-local.properties
 
 # run-etl-cluster.sh 会把配置同步到工作目录供 Driver 读取
 /spark-job.properties
+
+# 交付包输出目录（package-dist.ps1 生成）
+/dist/
